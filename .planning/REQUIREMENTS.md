@@ -139,13 +139,80 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| *(populated by roadmapper)* | | |
+| CORE-01 | Phase 1 | Pending |
+| CORE-02 | Phase 2 | Pending |
+| CORE-03 | Phase 3 | Pending |
+| CORE-04 | Phase 3 | Pending |
+| CORE-05 | Phase 2 | Pending |
+| CORE-06 | Phase 3 | Pending |
+| READ-01 | Phase 5 | Pending |
+| READ-02 | Phase 5 | Pending |
+| READ-03 | Phase 2 | Pending |
+| READ-04 | Phase 5 | Pending |
+| READ-05 | Phase 5 | Pending |
+| READ-06 | Phase 5 | Pending |
+| READ-07 | Phase 5 | Pending |
+| READ-08 | Phase 5 | Pending |
+| READ-09 | Phase 5 | Pending |
+| WRIT-01 | Phase 2 | Pending |
+| WRIT-02 | Phase 6 | Pending |
+| WRIT-03 | Phase 6 | Pending |
+| WRIT-04 | Phase 6 | Pending |
+| WRIT-05 | Phase 6 | Pending |
+| WRIT-06 | Phase 6 | Pending |
+| WRIT-07 | Phase 6 | Pending |
+| VID-01 | Phase 2 | Pending |
+| VID-02 | Phase 2 | Pending |
+| VID-03 | Phase 3 | Pending |
+| VID-04 | Phase 3 | Pending |
+| VID-05 | Phase 2 | Pending |
+| VID-06 | Phase 2 | Pending |
+| QUAL-01 | Phase 4 | Pending |
+| QUAL-02 | Phase 4 | Pending |
+| QUAL-03 | Phase 4 | Pending |
+| QUAL-04 | Phase 4 | Pending |
+| QUAL-05 | Phase 4 | Pending |
+| QUAL-06 | Phase 4 | Pending |
+| QUAL-07 | Phase 4 | Pending |
+| QUAL-08 | Phase 4 | Pending |
+| QUAL-09 | Phase 4 | Pending |
+| QUAL-10 | Phase 4 | Pending |
+| QUAL-11 | Phase 4 | Pending |
+| QUAL-12 | Phase 4 | Pending |
+| QUAL-13 | Phase 4 | Pending |
+| QUAL-14 | Phase 4 | Pending |
+| QUAL-15 | Phase 4 | Pending |
+| CLI-01 | Phase 7 | Pending |
+| CLI-02 | Phase 7 | Pending |
+| CLI-03 | Phase 7 | Pending |
+| CLI-04 | Phase 7 | Pending |
+| CLI-05 | Phase 7 | Pending |
+| CLI-06 | Phase 7 | Pending |
+| CLI-07 | Phase 2 | Pending |
+| CLI-08 | Phase 7 | Pending |
+| CLI-09 | Phase 7 | Pending |
+| CLI-10 | Phase 7 | Pending |
+| CLI-11 | Phase 1 | Pending |
+| CLI-12 | Phase 7 | Pending |
+| CLI-13 | Phase 7 | Pending |
+| CLI-14 | Phase 3 | Pending |
+| CLI-15 | Phase 7 | Pending |
+| CLI-16 | Phase 7 | Pending |
+| HUB-01 | Phase 7 | Pending |
+| HUB-02 | Phase 7 | Pending |
+| HUB-03 | Phase 8 | Pending |
+| HUB-04 | Phase 1 | Pending |
+| HUB-05 | Phase 8 | Pending |
+| HUB-06 | Phase 1 | Pending |
+| VIZ-01 | Phase 8 | Pending |
+| VIZ-02 | Phase 8 | Pending |
+| VIZ-03 | Phase 8 | Pending |
 
 **Coverage:**
-- v1 requirements: 57 total
-- Mapped to phases: 0
-- Unmapped: 57
+- v1 requirements: 68 total
+- Mapped to phases: 68
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-02-21*
-*Last updated: 2026-02-21 after initial definition*
+*Last updated: 2026-02-21 after roadmap creation*
