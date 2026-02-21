@@ -32,11 +32,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. CI pipeline runs on push and validates compilation on Linux and macOS with FFmpeg and HDF5 system libraries linked
   3. The Episode, Frame, LazyArray, LazyImage, and DatasetInfo types are defined and usable by downstream crates in the workspace
   4. The binary has no runtime dependency beyond system FFmpeg
-**Plans**: TBD
+**Plans:** 2 plans
 
 Plans:
-- [ ] 01-01: TBD
-- [ ] 01-02: TBD
+- [ ] 01-01-PLAN.md -- Cargo workspace, forge-core types, stub crates, and forge-cli version command
+- [ ] 01-02-PLAN.md -- GitHub Actions CI pipeline with FFmpeg and HDF5 linking validation
 
 ### Phase 2: LeRobot v3 End-to-End Pipeline
 **Goal**: Users can convert a real robotics dataset to LeRobot v3 format and load the output successfully in Python's LeRobotDataset
@@ -160,7 +160,7 @@ Note: Phase 5 depends on Phase 2 (not Phase 4), so Phases 3-4 and Phase 5 could 
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Core Types and Project Scaffolding | 0/? | Not started | - |
+| 1. Core Types and Project Scaffolding | 0/2 | Planning complete | - |
 | 2. LeRobot v3 End-to-End Pipeline | 0/? | Not started | - |
 | 3. Parallel Pipeline and Error Handling | 0/? | Not started | - |
 | 4. Quality Analysis and Filtering | 0/? | Not started | - |
