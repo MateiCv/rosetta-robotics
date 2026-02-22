@@ -21,11 +21,11 @@ Requirements for v2.0 milestone. Each maps to roadmap phases 5-8.
 
 ### Format Writing
 
-- [ ] **WRIT-02**: Writer produces valid RLDS/TFRecord datasets loadable by `tensorflow_datasets`
+- [x] **WRIT-02**: Writer produces valid RLDS/TFRecord datasets loadable by `tensorflow_datasets`
 - [ ] **WRIT-03**: Writer produces valid HDF5 datasets loadable by `h5py` with correct compound types
 - [ ] **WRIT-04**: Writer produces valid Zarr datasets loadable by Python `zarr` library
 - [ ] **WRIT-05**: Writer produces valid ROS bag files (ROS 2 MCAP format) playable by ROS 2 tools
-- [ ] **WRIT-06**: Writer produces valid LeRobot v2 datasets loadable by older LeRobot tooling
+- [x] **WRIT-06**: Writer produces valid LeRobot v2 datasets loadable by older LeRobot tooling
 - [ ] **WRIT-07**: Writer produces valid RoboDM datasets
 
 ### CLI and Configuration
@@ -105,11 +105,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | READ-07 | Phase 5 | Complete |
 | READ-08 | Phase 5 | Complete |
 | READ-09 | Phase 5 | Complete |
-| WRIT-02 | Phase 6 | Pending |
+| WRIT-02 | Phase 6 | Complete |
 | WRIT-03 | Phase 6 | Pending |
 | WRIT-04 | Phase 6 | Pending |
 | WRIT-05 | Phase 6 | Pending |
-| WRIT-06 | Phase 6 | Pending |
+| WRIT-06 | Phase 6 | Complete |
 | WRIT-07 | Phase 6 | Pending |
 | CLI-01 | Phase 7 | Pending |
 | CLI-02 | Phase 7 | Pending |

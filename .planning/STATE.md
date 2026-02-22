@@ -10,10 +10,10 @@ See: .planning/PROJECT.md (updated 2026-02-21)
 ## Current Position
 
 Milestone: v2.0 Format Breadth & Distribution
-Phase: 05-remaining-format-readers — SHIPPED
-Current Plan: 8 of 8 (Phase Complete + UAT Passed)
-Status: Phase Shipped
-Last activity: 2026-02-22 — UAT passed (10/11, 1 skipped), 318 tests green
+Phase: 06-remaining-format-writers
+Current Plan: 1 of 4
+Status: Executing
+Last activity: 2026-02-22 — Plan 06-01 complete (RLDS + LeRobot v2 writers)
 
 ## Performance Metrics
 
@@ -36,6 +36,7 @@ Last activity: 2026-02-22 — UAT passed (10/11, 1 skipped), 318 tests green
 | 05 | 02 - LeRobot v2 & GR00T Readers | 11min | 2 | 8 |
 | 05 | 03 - HDF5 Format Reader | 10min | 2 | 6 |
 | 05 | 08 - Format Registry Integration | 4min | 2 | 4 |
+| 06 | 01 - RLDS + LeRobot v2 Writers | 6min | 2 | 4 |
 
 ## Accumulated Context
 
@@ -68,6 +69,10 @@ Key decisions carried forward to PROJECT.md Key Decisions table.
 - [05-03] Simplified read_dataset_as_f64() to use hdf5 crate built-in type conversion instead of manual type matching
 - [05-08] all_formats() lists all 8 formats unconditionally (not behind cfg gates) for better user-facing display
 - [05-08] detect_format() fully delegates to scored system instead of maintaining separate first-match logic
+- [06-01] RLDS writer uses one shard per episode for simplicity and correct episode boundary markers
+- [06-01] Metadata features from frame.metadata round-tripped back through TFRecord features
+- [06-01] LeRobot v2 writer reuses lerobot_v3::parquet_io for schema building and parquet writing
+- [06-01] JSON keys always sorted for deterministic output (not conditional on deterministic flag)
 
 ### Pending Todos
 
@@ -88,6 +93,6 @@ Key items:
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Phase 05 shipped — UAT complete, all tests green
-Next: Phase 06 (Remaining Format Writers)
+Stopped at: Completed 06-01-PLAN.md (RLDS + LeRobot v2 writers)
+Next: 06-02-PLAN.md
 Resume file: .planning/ROADMAP.md
