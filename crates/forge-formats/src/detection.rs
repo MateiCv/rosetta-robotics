@@ -12,9 +12,12 @@ use std::path::Path;
 
 use forge_core::{ForgeError, ForgeResult};
 
+use crate::groot::GR00TDetector;
 use crate::lerobot_v2::LeRobotV2Detector;
 use crate::lerobot_v3::reader::LeRobotV3Reader;
 use crate::traits::FormatReader;
+#[cfg(feature = "zarr-format")]
+use crate::zarr::ZarrDetector;
 
 /// Confidence gap below which two detection results are considered ambiguous.
 pub const AMBIGUITY_THRESHOLD: f32 = 0.1;
@@ -62,10 +65,11 @@ pub fn detect_format_scored(path: &Path) -> ForgeResult<Vec<DetectionResult>> {
     // New detectors are added here as format readers are implemented.
     let detectors: Vec<Box<dyn FormatDetector>> = vec![
         // Phase 5 detectors: most specific first.
-        // Box::new(GR00TDetector),       // Plan 02 (added after LeRobotV2)
+        Box::new(GR00TDetector), // Must be before LeRobotV2 (more specific)
         // Box::new(RoboDMDetector),
         // Box::new(RLDSDetector),
-        // Box::new(ZarrDetector),
+        #[cfg(feature = "zarr-format")]
+        Box::new(ZarrDetector),
         // Box::new(HDF5Detector),
         // Box::new(RosbagDetector),
         Box::new(LeRobotV3Detector),

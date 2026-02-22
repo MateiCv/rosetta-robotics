@@ -8,10 +8,13 @@ use std::path::Path;
 
 use forge_core::{ForgeError, ForgeResult};
 
+use crate::groot::reader::GR00TReader;
 use crate::lerobot_v2::reader::LeRobotV2Reader;
 use crate::lerobot_v3::reader::LeRobotV3Reader;
 use crate::lerobot_v3::writer::LeRobotV3Writer;
 use crate::traits::{FormatReader, FormatWriter};
+#[cfg(feature = "zarr-format")]
+use crate::zarr::ZarrReader;
 
 /// Describes the capabilities of a single dataset format.
 #[derive(Debug, Clone, Copy)]
@@ -44,6 +47,12 @@ pub fn all_formats() -> &'static [FormatCapability] {
             can_write: false,
             description: "LeRobot v2 (per-episode Parquet + MP4 video)",
         },
+        FormatCapability {
+            name: "groot",
+            can_read: true,
+            can_write: false,
+            description: "GR00T / NVIDIA Isaac (LeRobot v2 with NVIDIA markers)",
+        },
     ];
     FORMATS
 }
@@ -64,6 +73,14 @@ pub fn detect_format(path: &Path) -> ForgeResult<&'static str> {
         return Ok("lerobot-v2");
     }
 
+    #[cfg(feature = "zarr-format")]
+    {
+        let zarr_reader = ZarrReader;
+        if zarr_reader.can_read(path) {
+            return Ok("zarr");
+        }
+    }
+
     Err(ForgeError::FormatDetection {
         path: path.to_path_buf(),
     })
@@ -74,6 +91,8 @@ pub fn get_reader(format_name: &str) -> ForgeResult<Box<dyn FormatReader>> {
     match format_name {
         "lerobot-v3" => Ok(Box::new(LeRobotV3Reader)),
         "lerobot-v2" => Ok(Box::new(LeRobotV2Reader)),
+        #[cfg(feature = "zarr-format")]
+        "zarr" => Ok(Box::new(ZarrReader)),
         _ => Err(ForgeError::UnsupportedFormat {
             format_name: format_name.to_string(),
             available: all_formats().iter().map(|f| f.name.to_string()).collect(),

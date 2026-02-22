@@ -12,6 +12,7 @@
 //! Phase 5-6.
 
 pub mod detection;
+pub mod groot;
 #[cfg(feature = "hdf5-format")]
 pub mod hdf5;
 pub mod lerobot_v2;
