@@ -14,11 +14,11 @@ rayon.workspace = true
 indicatif.workspace = true
 sysinfo.workspace = true
 crossbeam-channel.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
 bytes.workspace = true
-serde_json.workspace = true
 arrow.workspace = true
 parquet.workspace = true
 forge-video.workspace = true

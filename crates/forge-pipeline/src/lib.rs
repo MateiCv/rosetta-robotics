@@ -12,6 +12,10 @@
 
 pub mod convert;
 pub mod error_collector;
+pub mod prefetch;
+pub mod progress;
 
 pub use convert::{ConversionResult, Converter};
 pub use error_collector::{ErrorCollector, print_failure_summary};
+pub use prefetch::prefetch_episodes;
+pub use progress::{ProgressMode, ProgressReporter};
