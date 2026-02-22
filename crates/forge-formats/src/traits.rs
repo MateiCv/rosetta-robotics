@@ -1,0 +1,67 @@
+//! Format reader and writer trait definitions.
+//!
+//! All format implementations (LeRobot v3, RLDS, HDF5, Zarr, ROS bags, etc.)
+//! must implement [`FormatReader`] and/or [`FormatWriter`] to participate in
+//! the Forge conversion pipeline.
+
+use std::path::Path;
+
+use forge_core::{DatasetInfo, Episode, ForgeResult};
+
+/// Reads episodes from a dataset in a specific format.
+///
+/// Implementors convert from an on-disk format into the canonical
+/// [`Episode`] representation. The reader is `Send + Sync` to support
+/// concurrent use in the pipeline.
+pub trait FormatReader: Send + Sync {
+    /// Human-readable name of the format (e.g., "lerobot-v3").
+    fn format_name(&self) -> &str;
+
+    /// Returns `true` if `path` appears to be a valid dataset in this format.
+    ///
+    /// Used by format auto-detection. Implementations should perform a cheap
+    /// filesystem check (e.g., look for characteristic files or directory
+    /// layout) without reading full data.
+    fn can_read(&self, path: &Path) -> bool;
+
+    /// Inspect the dataset at `path` and return structural metadata.
+    ///
+    /// Does not read episode data -- only schema, counts, camera info, etc.
+    fn inspect(&self, path: &Path) -> ForgeResult<DatasetInfo>;
+
+    /// Read all episodes from the dataset at `path`.
+    ///
+    /// Returns a boxed iterator that yields episodes lazily. Each item may
+    /// fail independently, allowing partial reads of corrupted datasets.
+    fn read_episodes(
+        &self,
+        path: &Path,
+    ) -> ForgeResult<Box<dyn Iterator<Item = ForgeResult<Episode>>>>;
+}
+
+/// Writes episodes to a dataset in a specific format.
+///
+/// Implementors convert from the canonical [`Episode`] representation into
+/// an on-disk format. The writer is `Send + Sync` to support concurrent use
+/// in the pipeline.
+pub trait FormatWriter: Send + Sync {
+    /// Human-readable name of the format (e.g., "lerobot-v3").
+    fn format_name(&self) -> &str;
+
+    /// Write a single episode to the output dataset.
+    ///
+    /// `episode_index` is the zero-based position of this episode in the
+    /// output, which formats may use for file naming (e.g., episode_000042).
+    fn write_episode(
+        &mut self,
+        episode: &Episode,
+        output_path: &Path,
+        episode_index: usize,
+    ) -> ForgeResult<()>;
+
+    /// Finalize the dataset after all episodes have been written.
+    ///
+    /// Writes any top-level metadata files, indices, or manifests required
+    /// by the output format (e.g., `info.json`, `meta/info.json`).
+    fn finalize(&mut self, output_path: &Path, dataset_info: &DatasetInfo) -> ForgeResult<()>;
+}

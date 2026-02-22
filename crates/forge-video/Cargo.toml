@@ -8,3 +8,5 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+ffmpeg-next.workspace = true
+forge-core.workspace = true

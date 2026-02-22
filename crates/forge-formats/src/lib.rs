@@ -1,8 +1,18 @@
 //! Format readers and writers for robotics dataset formats.
 //!
-//! Each supported format (LeRobot v3, RLDS, HDF5, Zarr, ROS bags, etc.)
-//! is implemented as a reader and/or writer that converts between the
-//! format's on-disk representation and the canonical [`forge_core::Episode`]
-//! type.
+//! This crate provides the [`FormatReader`] and [`FormatWriter`] traits that
+//! all dataset format implementations must satisfy, plus a static
+//! [`registry`] of supported formats and their capabilities.
 //!
-//! Implementation arrives in Phase 2 (LeRobot v3) and Phase 5-6 (remaining formats).
+//! Currently supported formats:
+//! - **lerobot-v3** -- LeRobot v3 (Parquet + MP4 video) [read + write]
+//!
+//! Additional formats (RLDS, HDF5, Zarr, ROS bags, etc.) will be added in
+//! Phase 5-6.
+
+pub mod registry;
+pub mod traits;
+
+// Re-export key types for convenience.
+pub use registry::{all_formats, detect_format, FormatCapability};
+pub use traits::{FormatReader, FormatWriter};
