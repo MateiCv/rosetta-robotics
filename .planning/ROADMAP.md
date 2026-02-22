@@ -13,7 +13,7 @@ Forge Rust rewrites the Python Forge dataset converter in Rust for 5-15x perform
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Core Types and Project Scaffolding** - Cargo workspace, canonical data models, CI pipeline, and binary skeleton
-- [ ] **Phase 2: LeRobot v3 End-to-End Pipeline** - Read and write LeRobot v3 datasets with H.264 video and Parquet, validating core architecture
+- [x] **Phase 2: LeRobot v3 End-to-End Pipeline** - Read and write LeRobot v3 datasets with H.264 video and Parquet, validating core architecture (completed 2026-02-22)
 - [ ] **Phase 3: Parallel Pipeline and Error Handling** - Rayon parallelism, zero-copy video, error continuation, deterministic output, and progress reporting
 - [ ] **Phase 4: Quality Analysis and Filtering** - All quality metrics, streaming analysis, SIMD acceleration, episode filtering, and export
 - [ ] **Phase 5: Remaining Format Readers** - RLDS, LeRobot v2, HDF5, Zarr, ROS bags, RoboDM, GR00T readers with format auto-detection
@@ -48,7 +48,7 @@ Plans:
   3. H.264 MP4 video files produced by the encoder match LeRobot v3 conventions (CRF, preset, profile, pixel format) and frame counts exactly match Parquet timestamp columns
   4. Running `forge formats` lists all supported formats with their read/write capabilities
   5. Field mapping and camera name remapping are applied during conversion as specified in config
-**Plans:** 4 plans
+**Plans:** 4/4 plans complete
 
 Plans:
 - [ ] 02-01-PLAN.md -- forge-video H.264 encoder and decoder (ffmpeg-next)
@@ -162,7 +162,7 @@ Note: Phase 5 depends on Phase 2 (not Phase 4), so Phases 3-4 and Phase 5 could 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Core Types and Project Scaffolding | 2/2 | Complete    | 2026-02-22 |
-| 2. LeRobot v3 End-to-End Pipeline | 0/4 | Not started | - |
+| 2. LeRobot v3 End-to-End Pipeline | 0/4 | Complete    | 2026-02-22 |
 | 3. Parallel Pipeline and Error Handling | 0/? | Not started | - |
 | 4. Quality Analysis and Filtering | 0/? | Not started | - |
 | 5. Remaining Format Readers | 0/? | Not started | - |
