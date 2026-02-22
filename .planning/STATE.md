@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-02-21)
 ## Current Position
 
 Phase: 2 of 8 (LeRobot v3 End-to-End Pipeline)
-Plan: 2 of 4 in current phase
+Plan: 3 of 4 in current phase
 Status: In progress
-Last activity: 2026-02-22 -- Completed 02-02 Format traits, registry, and CLI subcommand
+Last activity: 2026-02-22 -- Completed 02-01 Video codec (H264VideoEncoder + VideoDecoder)
 
 Progress: [█████-----] 50% (Phase 2)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 3
-- Average duration: 3min
-- Total execution time: 0.15 hours
+- Total plans completed: 4
+- Average duration: 5min
+- Total execution time: 0.33 hours
 
 **By Phase:**
 
@@ -34,6 +34,7 @@ Progress: [█████-----] 50% (Phase 2)
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 02 P01 | 11min | 2 tasks | 5 files |
 | Phase 02 P02 | 3min | 2 tasks | 7 files |
 | Phase 01 P02 | 1min | 1 tasks | 1 files |
 | Phase 01 P01 | 5min | 2 tasks | 22 files |
@@ -55,6 +56,8 @@ Recent decisions affecting current work:
 - [Phase 02]: FormatReader returns Box<dyn Iterator> for lazy episode streaming
 - [Phase 02]: FormatCapability uses &'static str for zero-alloc registry
 - [Phase 02]: detect_format() stub until first FormatReader lands in Plan 03
+- [Phase 02]: ffmpeg-next v8 instead of v7 (v7 incompatible with FFmpeg 8.x -- avfft.h removed)
+- [Phase 02]: Packet duration fix: set frame_dur when encoder returns duration=0 to avoid last-frame truncation in MP4
 
 ### Pending Todos
 
@@ -67,5 +70,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Completed 02-02-PLAN.md (Format traits, registry, and CLI subcommand)
+Stopped at: Completed 02-01-PLAN.md (Video codec: H264VideoEncoder + VideoDecoder)
 Resume file: None
