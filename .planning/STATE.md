@@ -11,9 +11,9 @@ See: .planning/PROJECT.md (updated 2026-02-21)
 
 Milestone: v2.0 Format Breadth & Distribution
 Phase: 05-remaining-format-readers
-Current Plan: 2 of 8
+Current Plan: 8 of 8
 Status: Executing
-Last activity: 2026-02-22 — Completed 05-01 (Shared Infrastructure)
+Last activity: 2026-02-22 — Completed 05-07 (RoboDM Format Reader)
 
 ## Performance Metrics
 
@@ -29,6 +29,7 @@ Last activity: 2026-02-22 — Completed 05-01 (Shared Infrastructure)
 | Phase | Plan | Duration | Tasks | Files |
 |-------|------|----------|-------|-------|
 | 05 | 01 - Shared Infrastructure | 15min | 2 | 15 |
+| 05 | 07 - RoboDM Format Reader | 4min | 1 | 3 |
 
 ## Accumulated Context
 
@@ -42,6 +43,8 @@ Key decisions carried forward to PROJECT.md Key Decisions table.
 - [05-01] zarrs pinned to 0.22 (not 0.23) because 0.23 requires Rust 1.91 and project MSRV is 1.85 (toolchain 1.90)
 - [05-01] hdf5-format excluded from default features because it requires system libHDF5 installation
 - [05-01] Added sort_json_keys helper to writer to fix deterministic output broken by zarrs enabling serde_json/preserve_order
+- [05-07] Manual EBML VINT parsing used instead of ebml-iterable crate because RoboDM schema is undocumented
+- [05-07] Heuristic element classification (image/numeric/text/integer/raw) for best-effort schema reading
 
 ### Pending Todos
 
@@ -62,5 +65,5 @@ Key items:
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Completed 05-01-PLAN.md, ready for 05-02
-Resume file: .planning/phases/05-remaining-format-readers/05-01-SUMMARY.md
+Stopped at: Completed 05-07-PLAN.md, ready for 05-08
+Resume file: .planning/phases/05-remaining-format-readers/05-07-SUMMARY.md
