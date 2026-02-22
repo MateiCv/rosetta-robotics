@@ -10,7 +10,7 @@ Requirements for initial release. Each maps to roadmap phases.
 ### Core Pipeline
 
 - [x] **CORE-01**: System defines canonical Episode, Frame, LazyArray, LazyImage, and DatasetInfo data models shared across all formats
-- [ ] **CORE-02**: Conversion pipeline reads episodes from source format and writes to target format with configurable field/camera remapping
+- [x] **CORE-02**: Conversion pipeline reads episodes from source format and writes to target format with configurable field/camera remapping
 - [ ] **CORE-03**: Pipeline processes episodes in parallel via rayon work-stealing thread pool with zero serialization overhead
 - [ ] **CORE-04**: Pipeline continues on per-episode errors by default, collecting failures for summary report (`--fail-on-error` to override)
 - [x] **CORE-05**: Lock-free chunked Parquet writing constructs Arrow buffers directly in native memory without Python intermediary
@@ -30,7 +30,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Format Writing
 
-- [ ] **WRIT-01**: Writer produces valid LeRobot v3 datasets (Parquet + MP4) with schema compatible with Python `LeRobotDataset` loader
+- [x] **WRIT-01**: Writer produces valid LeRobot v3 datasets (Parquet + MP4) with schema compatible with Python `LeRobotDataset` loader
 - [ ] **WRIT-02**: Writer produces valid RLDS/TFRecord datasets loadable by `tensorflow_datasets`
 - [ ] **WRIT-03**: Writer produces valid HDF5 datasets loadable by `h5py` with correct compound types
 - [ ] **WRIT-04**: Writer produces valid Zarr datasets loadable by Python `zarr` library
@@ -44,7 +44,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **VID-02**: Video decoder reads MP4/video files from LeRobot v3 and other video-containing formats
 - [ ] **VID-03**: Zero-copy video pipeline borrows frames through read-transform-encode chain without intermediate allocations
 - [ ] **VID-04**: Prefetching frame decoder uses ring buffer to decode next episode's video while writing current episode
-- [ ] **VID-05**: Video frame count in Parquet timestamp column exactly matches frames in MP4 files (no off-by-one errors)
+- [x] **VID-05**: Video frame count in Parquet timestamp column exactly matches frames in MP4 files (no off-by-one errors)
 - [x] **VID-06**: Keyframes forced at episode boundaries in multi-episode MP4 files for deterministic seeking
 
 ### Quality Analysis
@@ -140,7 +140,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | CORE-01 | Phase 1 | Complete |
-| CORE-02 | Phase 2 | Pending |
+| CORE-02 | Phase 2 | Complete |
 | CORE-03 | Phase 3 | Pending |
 | CORE-04 | Phase 3 | Pending |
 | CORE-05 | Phase 2 | Complete |
@@ -154,7 +154,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | READ-07 | Phase 5 | Pending |
 | READ-08 | Phase 5 | Pending |
 | READ-09 | Phase 5 | Pending |
-| WRIT-01 | Phase 2 | Pending |
+| WRIT-01 | Phase 2 | Complete |
 | WRIT-02 | Phase 6 | Pending |
 | WRIT-03 | Phase 6 | Pending |
 | WRIT-04 | Phase 6 | Pending |
@@ -165,7 +165,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | VID-02 | Phase 2 | Complete |
 | VID-03 | Phase 3 | Pending |
 | VID-04 | Phase 3 | Pending |
-| VID-05 | Phase 2 | Pending |
+| VID-05 | Phase 2 | Complete |
 | VID-06 | Phase 2 | Complete |
 | QUAL-01 | Phase 4 | Pending |
 | QUAL-02 | Phase 4 | Pending |

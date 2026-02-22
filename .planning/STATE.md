@@ -9,19 +9,19 @@ See: .planning/PROJECT.md (updated 2026-02-21)
 
 ## Current Position
 
-Phase: 2 of 8 (LeRobot v3 End-to-End Pipeline)
-Plan: 4 of 4 in current phase
-Status: In progress
-Last activity: 2026-02-22 -- Completed 02-03 LeRobot v3 Reader (LeRobotV3Reader + Parquet I/O)
+Phase: 2 of 8 (LeRobot v3 End-to-End Pipeline) -- COMPLETE
+Plan: 4 of 4 in current phase (all complete)
+Status: Phase 2 complete
+Last activity: 2026-02-22 -- Completed 02-04 Writer and Conversion Pipeline
 
-Progress: [███████▌--] 75% (Phase 2)
+Progress: [██████████] 100% (Phase 2)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 5
-- Average duration: 5min
-- Total execution time: 0.45 hours
+- Total plans completed: 6
+- Average duration: 6min
+- Total execution time: 0.6 hours
 
 **By Phase:**
 
@@ -34,6 +34,7 @@ Progress: [███████▌--] 75% (Phase 2)
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 02 P04 | 9min | 2 tasks | 14 files |
 | Phase 02 P03 | 7min | 2 tasks | 10 files |
 | Phase 02 P01 | 11min | 2 tasks | 5 files |
 | Phase 02 P02 | 3min | 2 tasks | 7 files |
@@ -63,6 +64,9 @@ Recent decisions affecting current work:
 - [Phase 02]: Read all Parquet data upfront in Phase 2 (streaming deferred to Phase 3)
 - [Phase 02]: Lazy video frame decoding via closure capture -- sequential iteration, seeking deferred to Phase 3
 - [Phase 02]: detect_format() now functional via LeRobotV3Reader.can_read()
+- [Phase 02]: Per-episode Parquet files within chunks (writer); reader scans file_index 0..N for compatibility
+- [Phase 02]: get_writer() returns default 30fps/unknown writer; Converter configures from ConversionConfig
+- [Phase 02]: Converter handles error continuation (fail_on_error=false) and camera remapping
 
 ### Pending Todos
 
@@ -75,5 +79,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Completed 02-03-PLAN.md (LeRobot v3 Reader: LeRobotV3Reader + Parquet I/O)
+Stopped at: Completed 02-04-PLAN.md (Writer and Conversion Pipeline -- Phase 2 complete)
 Resume file: None
