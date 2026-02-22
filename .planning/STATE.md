@@ -11,9 +11,9 @@ See: .planning/PROJECT.md (updated 2026-02-21)
 
 Milestone: v2.0 Format Breadth & Distribution
 Phase: 05-remaining-format-readers
-Current Plan: 8 of 8
-Status: Executing
-Last activity: 2026-02-22 — Completed 05-07 (RoboDM Format Reader)
+Current Plan: 8 of 8 (Phase Complete)
+Status: Phase Complete
+Last activity: 2026-02-22 — Completed 05-08 (Format Registry Integration)
 
 ## Performance Metrics
 
@@ -35,6 +35,7 @@ Last activity: 2026-02-22 — Completed 05-07 (RoboDM Format Reader)
 | 05 | 06 - ROS Bag Format Reader | 10min | 2 | 7 |
 | 05 | 02 - LeRobot v2 & GR00T Readers | 11min | 2 | 8 |
 | 05 | 03 - HDF5 Format Reader | 10min | 2 | 6 |
+| 05 | 08 - Format Registry Integration | 4min | 2 | 4 |
 
 ## Accumulated Context
 
@@ -65,6 +66,8 @@ Key decisions carried forward to PROJECT.md Key Decisions table.
 - [05-02] NVIDIA robot_type detection is case-insensitive substring match against known identifiers
 - [05-03] Use hdf5 crate 0.8.1 with HDF5 1.10 system library (not HDF5 2.0) for compatibility
 - [05-03] Simplified read_dataset_as_f64() to use hdf5 crate built-in type conversion instead of manual type matching
+- [05-08] all_formats() lists all 8 formats unconditionally (not behind cfg gates) for better user-facing display
+- [05-08] detect_format() fully delegates to scored system instead of maintaining separate first-match logic
 
 ### Pending Todos
 
@@ -85,5 +88,5 @@ Key items:
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Completed 05-03-PLAN.md (HDF5 Format Reader)
-Resume file: .planning/phases/05-remaining-format-readers/05-03-SUMMARY.md
+Stopped at: Completed 05-08-PLAN.md (Format Registry Integration) - Phase 05 Complete
+Resume file: .planning/phases/05-remaining-format-readers/05-08-SUMMARY.md

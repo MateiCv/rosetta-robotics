@@ -115,6 +115,17 @@ None - no external service configuration required.
 - All 178 tests pass across the forge-formats crate
 - Ready for Plan 08 (auto-detection integration) which will test cross-format detection
 
+## Self-Check: PASSED
+
+All files verified present on disk. All commits verified in git history.
+- `crates/forge-formats/src/lerobot_v2/mod.rs` -- FOUND
+- `crates/forge-formats/src/lerobot_v2/info.rs` -- FOUND
+- `crates/forge-formats/src/lerobot_v2/reader.rs` -- FOUND
+- `crates/forge-formats/src/groot/mod.rs` -- FOUND
+- `crates/forge-formats/src/groot/reader.rs` -- FOUND
+- Commit `63872cd` (Task 1) -- FOUND
+- Commit `dc95a95` (Task 2) -- FOUND
+
 ---
 *Phase: 05-remaining-format-readers, Plan: 02*
 *Completed: 2026-02-22*
