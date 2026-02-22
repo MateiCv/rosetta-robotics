@@ -32,6 +32,8 @@ Last activity: 2026-02-22 — Completed 05-07 (RoboDM Format Reader)
 | 05 | 05 - RLDS/TFRecord Format Reader | 9min | 2 | 6 |
 | 05 | 04 - Zarr Format Reader | 9min | 2 | 5 |
 | 05 | 07 - RoboDM Format Reader | 4min | 1 | 3 |
+| 05 | 06 - ROS Bag Format Reader | 10min | 2 | 7 |
+| 05 | 02 - LeRobot v2 & GR00T Readers | 11min | 2 | 8 |
 
 ## Accumulated Context
 
@@ -52,6 +54,10 @@ Key decisions carried forward to PROJECT.md Key Decisions table.
 - [05-07] Heuristic element classification (image/numeric/text/integer/raw) for best-effort schema reading
 - [05-04] Lazy loading opens fresh FilesystemStore per frame to avoid lifetime issues with zarrs Arc-based API
 - [05-04] Image arrays detected by shape heuristic (4D uint8 with C in 1/3/4) plus name hints
+- [05-06] Manual CDR deserialization for known ROS 2 types instead of rosbags-rs dependency
+- [05-06] 10ms timestamp alignment window for grouping concurrent ROS messages into frames
+- [05-06] ROS 2 .db3 SQLite bags emit ReadWarning with conversion instructions instead of reading
+- [05-06] Unknown ROS message types stored as base64-encoded opaque metadata
 
 ### Pending Todos
 
@@ -72,5 +78,5 @@ Key items:
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Completed 05-04-PLAN.md (Zarr Format Reader)
-Resume file: .planning/phases/05-remaining-format-readers/05-04-SUMMARY.md
+Stopped at: Completed 05-06-PLAN.md (ROS Bag Format Reader)
+Resume file: .planning/phases/05-remaining-format-readers/05-06-SUMMARY.md
