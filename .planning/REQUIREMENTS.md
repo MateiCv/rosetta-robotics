@@ -73,7 +73,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **CLI-04**: `forge filter <path> <output>` filters episodes by quality criteria
 - [ ] **CLI-05**: `forge hub download <repo>` downloads datasets from HuggingFace Hub
 - [ ] **CLI-06**: `forge hub upload <path> <repo>` uploads datasets to HuggingFace Hub
-- [ ] **CLI-07**: `forge formats` lists all supported formats with read/write capabilities
+- [x] **CLI-07**: `forge formats` lists all supported formats with read/write capabilities
 - [ ] **CLI-08**: `forge stats <path>` shows dataset statistics with distribution analysis
 - [ ] **CLI-09**: `forge export-video <path>` exports episodes as standalone video files
 - [ ] **CLI-10**: `forge visualize <path>` opens interactive dataset viewer
@@ -188,7 +188,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CLI-04 | Phase 7 | Pending |
 | CLI-05 | Phase 7 | Pending |
 | CLI-06 | Phase 7 | Pending |
-| CLI-07 | Phase 2 | Pending |
+| CLI-07 | Phase 2 | Complete |
 | CLI-08 | Phase 7 | Pending |
 | CLI-09 | Phase 7 | Pending |
 | CLI-10 | Phase 7 | Pending |

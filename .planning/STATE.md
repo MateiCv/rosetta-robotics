@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-21)
 
 **Core value:** Convert any robotics dataset format to any other format as fast as the hardware allows, without losing data fidelity.
-**Current focus:** Phase 1 - Core Types and Project Scaffolding
+**Current focus:** Phase 2 - LeRobot v3 End-to-End Pipeline
 
 ## Current Position
 
-Phase: 1 of 8 (Core Types and Project Scaffolding)
-Plan: 2 of 2 in current phase
-Status: Phase complete
-Last activity: 2026-02-22 -- Completed 01-01 Cargo workspace, core types, and CLI
+Phase: 2 of 8 (LeRobot v3 End-to-End Pipeline)
+Plan: 2 of 4 in current phase
+Status: In progress
+Last activity: 2026-02-22 -- Completed 02-02 Format traits, registry, and CLI subcommand
 
-Progress: [██████████] 100% (Phase 1)
+Progress: [█████-----] 50% (Phase 2)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 2
+- Total plans completed: 3
 - Average duration: 3min
-- Total execution time: 0.1 hours
+- Total execution time: 0.15 hours
 
 **By Phase:**
 
@@ -34,6 +34,7 @@ Progress: [██████████] 100% (Phase 1)
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 02 P02 | 3min | 2 tasks | 7 files |
 | Phase 01 P02 | 1min | 1 tasks | 1 files |
 | Phase 01 P01 | 5min | 2 tasks | 22 files |
 
@@ -51,6 +52,9 @@ Recent decisions affecting current work:
 - [Phase 01]: Used manual build.rs instead of vergen-gitcl for build info (zero deps, avoids MSRV conflicts)
 - [Phase 01]: anyhow v1 (not v2 as planned -- v2 does not exist)
 - [Phase 01]: Type aliases ImageLoader/ArrayLoader for clippy compliance on complex Mutex<Option<Box<dyn FnOnce>>> types
+- [Phase 02]: FormatReader returns Box<dyn Iterator> for lazy episode streaming
+- [Phase 02]: FormatCapability uses &'static str for zero-alloc registry
+- [Phase 02]: detect_format() stub until first FormatReader lands in Plan 03
 
 ### Pending Todos
 
@@ -63,5 +67,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Completed 01-01-PLAN.md (Phase 1 complete: both plans executed)
+Stopped at: Completed 02-02-PLAN.md (Format traits, registry, and CLI subcommand)
 Resume file: None
