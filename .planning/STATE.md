@@ -11,9 +11,9 @@ See: .planning/PROJECT.md (updated 2026-02-21)
 
 Milestone: v2.0 Format Breadth & Distribution
 Phase: 06-remaining-format-writers
-Current Plan: 3 of 4
-Status: Executing
-Last activity: 2026-02-22 — Plan 06-02 complete (HDF5 + Zarr writers)
+Current Plan: 4 of 4
+Status: Phase Complete
+Last activity: 2026-02-22 — Plan 06-04 complete (Format Registry Integration)
 
 ## Performance Metrics
 
@@ -39,6 +39,7 @@ Last activity: 2026-02-22 — Plan 06-02 complete (HDF5 + Zarr writers)
 | 06 | 01 - RLDS + LeRobot v2 Writers | 6min | 2 | 4 |
 | 06 | 02 - HDF5 + Zarr Writers | 8min | 2 | 8 |
 | 06 | 03 - ROS Bag + RoboDM Writers | 7min | 2 | 4 |
+| 06 | 04 - Format Registry Integration | 6min | 2 | 3 |
 
 ## Accumulated Context
 
@@ -83,6 +84,8 @@ Key decisions carried forward to PROJECT.md Key Decisions table.
 - [06-03] CdrWriter placed in writer.rs (not ros2.rs) to keep reader module clean
 - [06-03] Float64MultiArray used for action data as most general ROS 2 numeric array type
 - [06-03] Auto-generated joint names (joint_0, joint_1, ...) for state JointState messages
+- [06-04] RoboDM round-trip tests use relaxed assertions due to heuristic EBML element classification with small test images
+- [06-04] GR00T remains read-only; users should write to lerobot-v2 for NVIDIA-compatible output
 
 ### Pending Todos
 
@@ -103,6 +106,6 @@ Key items:
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Completed 06-02-PLAN.md (HDF5 + Zarr writers)
-Next: 06-04-PLAN.md (Format Registry Integration)
+Stopped at: Completed 06-04-PLAN.md (Format Registry Integration) -- Phase 06 complete
+Next: Phase 07 (CLI Pipeline Integration)
 Resume file: .planning/ROADMAP.md
