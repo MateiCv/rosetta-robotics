@@ -17,7 +17,7 @@ Requirements for v2.0 milestone. Each maps to roadmap phases 5-8.
 - [ ] **READ-06**: Reader detects and reads ROS bag files (ROS 1 .bag and ROS 2 MCAP formats)
 - [ ] **READ-07**: Reader detects and reads RoboDM datasets (Berkeley format)
 - [ ] **READ-08**: Reader detects and reads GR00T datasets (NVIDIA Isaac format)
-- [ ] **READ-09**: Format auto-detection identifies dataset format from filesystem structure without user hint for all 8 formats
+- [x] **READ-09**: Format auto-detection identifies dataset format from filesystem structure without user hint for all 8 formats
 
 ### Format Writing
 
@@ -104,7 +104,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | READ-06 | Phase 5 | Pending |
 | READ-07 | Phase 5 | Pending |
 | READ-08 | Phase 5 | Pending |
-| READ-09 | Phase 5 | Pending |
+| READ-09 | Phase 5 | Complete |
 | WRIT-02 | Phase 6 | Pending |
 | WRIT-03 | Phase 6 | Pending |
 | WRIT-04 | Phase 6 | Pending |

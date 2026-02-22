@@ -36,7 +36,7 @@ See: `.planning/milestones/v1.0-ROADMAP.md` for full details.
 **Plans**: 8 plans
 
 Plans:
-- [ ] 05-01-PLAN.md — Core reader infrastructure (ImageEncoding, FormatDetector, detection engine, workspace deps)
+- [x] 05-01-PLAN.md — Core reader infrastructure (ImageEncoding, FormatDetector, detection engine, workspace deps) -- completed 2026-02-22
 - [ ] 05-02-PLAN.md — LeRobot v2 + GR00T readers
 - [ ] 05-03-PLAN.md — HDF5 reader (robomimic + ALOHA layouts)
 - [ ] 05-04-PLAN.md — Zarr reader (Diffusion Policy, UMI with Blosc)
@@ -103,7 +103,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 | 2. LeRobot v3 End-to-End Pipeline | v1.0 | 4/4 | Complete | 2026-02-22 |
 | 3. Parallel Pipeline and Error Handling | v1.0 | 4/4 | Complete | 2026-02-22 |
 | 4. Quality Analysis and Filtering | v1.0 | 4/4 | Complete | 2026-02-22 |
-| 5. Remaining Format Readers | Next | 0/8 | Planned | - |
+| 5. Remaining Format Readers | Next | 1/8 | In Progress | - |
 | 6. Remaining Format Writers | Next | 0/? | Not started | - |
 | 7. CLI, Configuration, and Hub Download | Next | 0/? | Not started | - |
 | 8. Hub Upload, Visualization, and Distribution | Next | 0/? | Not started | - |
