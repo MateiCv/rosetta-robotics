@@ -91,7 +91,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **HUB-03**: Upload converted datasets to HuggingFace Hub including repo creation and Git LFS for large files
 - [ ] **HUB-04**: Single static binary with no runtime dependencies beyond system FFmpeg
 - [ ] **HUB-05**: Cross-platform binary releases for Linux x86_64, Linux aarch64, macOS x86_64, macOS aarch64, and Windows x86_64
-- [ ] **HUB-06**: CI/CD pipeline with automated testing and binary release builds
+- [x] **HUB-06**: CI/CD pipeline with automated testing and binary release builds
 
 ### Visualization and Export
 
@@ -203,7 +203,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | HUB-03 | Phase 8 | Pending |
 | HUB-04 | Phase 1 | Pending |
 | HUB-05 | Phase 8 | Pending |
-| HUB-06 | Phase 1 | Pending |
+| HUB-06 | Phase 1 | Complete |
 | VIZ-01 | Phase 8 | Pending |
 | VIZ-02 | Phase 8 | Pending |
 | VIZ-03 | Phase 8 | Pending |

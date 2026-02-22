@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-02-21)
 ## Current Position
 
 Phase: 1 of 8 (Core Types and Project Scaffolding)
-Plan: 0 of ? in current phase
-Status: Ready to plan
-Last activity: 2026-02-21 -- Roadmap created with 8 phases covering 68 v1 requirements
+Plan: 1 of 2 in current phase
+Status: Executing
+Last activity: 2026-02-22 -- Completed 01-02 CI pipeline plan
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 0
-- Average duration: -
-- Total execution time: 0 hours
+- Total plans completed: 1
+- Average duration: 1min
+- Total execution time: 0.02 hours
 
 **By Phase:**
 
@@ -34,6 +34,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 01 P02 | 1min | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -44,6 +45,8 @@ Recent decisions affecting current work:
 
 - [Roadmap]: 8 phases derived from 68 requirements. LeRobot v3 end-to-end validated first (Phase 2) before format breadth (Phase 5-6). Quality analysis (Phase 4) built before remaining readers to be available as formats are added.
 - [Roadmap]: Research recommends de-risking FFI early -- FFmpeg and HDF5 linking proven in Phase 1 CI before video code exists in Phase 2.
+- [Phase 01]: Used native apt/brew for FFmpeg instead of AnimMouse/setup-ffmpeg action -- simpler, start with Ubuntu 22.04 defaults
+- [Phase 01]: Single CI job with matrix strategy instead of separate lint/build/test jobs -- matches solo-developer workflow
 
 ### Pending Todos
 
@@ -55,6 +58,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-21
-Stopped at: Roadmap created, ready for Phase 1 planning
+Last session: 2026-02-22
+Stopped at: Completed 01-02-PLAN.md
 Resume file: None
