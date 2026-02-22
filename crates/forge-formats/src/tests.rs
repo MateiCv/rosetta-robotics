@@ -1,12 +1,10 @@
-//! Integration tests for the LeRobot v3 reader.
+//! Integration tests for format detection, reader resolution, and LeRobot v3 reader.
 //!
-//! Creates a synthetic LeRobot v3 dataset in a temp directory with:
-//! - meta/info.json (2 episodes, 5 frames each, 4-dim action/state, 1 camera)
-//! - data/chunk-000/file-000.parquet (proper Arrow schema)
-//! - videos/observation.images.top/chunk-000/file-000.mp4 (encoded video)
-//! - meta/episodes/chunk-000/file-000.parquet (episode metadata)
-//!
-//! Then uses LeRobotV3Reader to inspect and read the dataset.
+//! Tests are organized into sections:
+//! 1. LeRobot v3 synthetic dataset tests (original)
+//! 2. Format registry tests (all_formats, get_reader)
+//! 3. Scored detection engine tests (detect_format_scored, detect_format)
+//! 4. ReadOutput warning accessibility tests
 
 use std::path::Path;
 use std::sync::Arc;
@@ -15,10 +13,12 @@ use arrow::array::{
     ArrayRef, Float32Array, Float32Builder, FixedSizeListBuilder, Int64Array, RecordBatch,
 };
 use arrow::datatypes::{DataType, Field, Schema};
+use forge_core::{ReadOutput, ReadWarning, WarningSeverity};
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
 use tempfile::TempDir;
 
+use crate::detection::{detect_format_scored, AMBIGUITY_THRESHOLD};
 use crate::lerobot_v3::reader::LeRobotV3Reader;
 use crate::traits::FormatReader;
 
@@ -402,4 +402,327 @@ fn lazy_video_frame_loads_correctly() {
     );
 
     assert!(image.is_loaded(), "image should be loaded now");
+}
+
+// ---- Format Registry Tests ----
+
+#[test]
+fn all_formats_returns_all_eight_formats() {
+    let formats = crate::all_formats();
+    assert_eq!(formats.len(), 8, "expected 8 formats, got {}", formats.len());
+
+    let names: Vec<&str> = formats.iter().map(|f| f.name).collect();
+    assert!(names.contains(&"lerobot-v3"), "missing lerobot-v3");
+    assert!(names.contains(&"lerobot-v2"), "missing lerobot-v2");
+    assert!(names.contains(&"groot"), "missing groot");
+    assert!(names.contains(&"hdf5"), "missing hdf5");
+    assert!(names.contains(&"zarr"), "missing zarr");
+    assert!(names.contains(&"rlds"), "missing rlds");
+    assert!(names.contains(&"rosbag"), "missing rosbag");
+    assert!(names.contains(&"robodm"), "missing robodm");
+}
+
+#[test]
+fn all_formats_can_read_is_true_for_all() {
+    let formats = crate::all_formats();
+    for fmt in formats {
+        assert!(fmt.can_read, "format '{}' should have can_read=true", fmt.name);
+    }
+}
+
+#[test]
+fn all_formats_can_write_only_for_lerobot_v3() {
+    let formats = crate::all_formats();
+    for fmt in formats {
+        if fmt.name == "lerobot-v3" {
+            assert!(fmt.can_write, "lerobot-v3 should have can_write=true");
+        } else {
+            assert!(!fmt.can_write, "format '{}' should have can_write=false", fmt.name);
+        }
+    }
+}
+
+#[test]
+fn get_reader_returns_correct_format_name_for_lerobot_v2() {
+    let reader = crate::get_reader("lerobot-v2").unwrap();
+    assert_eq!(reader.format_name(), "lerobot-v2");
+}
+
+#[test]
+fn get_reader_returns_correct_format_name_for_groot() {
+    let reader = crate::get_reader("groot").unwrap();
+    assert_eq!(reader.format_name(), "groot");
+}
+
+#[cfg(feature = "rlds-format")]
+#[test]
+fn get_reader_returns_correct_format_name_for_rlds() {
+    let reader = crate::get_reader("rlds").unwrap();
+    assert_eq!(reader.format_name(), "rlds");
+}
+
+#[cfg(feature = "zarr-format")]
+#[test]
+fn get_reader_returns_correct_format_name_for_zarr() {
+    let reader = crate::get_reader("zarr").unwrap();
+    assert_eq!(reader.format_name(), "zarr");
+}
+
+#[cfg(feature = "hdf5-format")]
+#[test]
+fn get_reader_returns_correct_format_name_for_hdf5() {
+    let reader = crate::get_reader("hdf5").unwrap();
+    assert_eq!(reader.format_name(), "hdf5");
+}
+
+#[cfg(feature = "rosbag-format")]
+#[test]
+fn get_reader_returns_correct_format_name_for_rosbag() {
+    let reader = crate::get_reader("rosbag").unwrap();
+    assert_eq!(reader.format_name(), "rosbag");
+}
+
+#[cfg(feature = "robodm-format")]
+#[test]
+fn get_reader_returns_correct_format_name_for_robodm() {
+    let reader = crate::get_reader("robodm").unwrap();
+    assert_eq!(reader.format_name(), "robodm");
+}
+
+// ---- Scored Detection Engine Tests ----
+
+/// Create a minimal v2 dataset directory structure for detection tests.
+fn create_v2_dataset_dir(robot_type: &str, codebase_version: &str) -> TempDir {
+    let tmp = TempDir::new().expect("create temp dir");
+    let meta_dir = tmp.path().join("meta");
+    std::fs::create_dir_all(&meta_dir).unwrap();
+
+    let info = serde_json::json!({
+        "codebase_version": codebase_version,
+        "robot_type": robot_type,
+        "total_episodes": 1,
+        "total_frames": 5,
+        "fps": 30,
+        "features": {
+            "action": { "dtype": "float32", "shape": [4] },
+            "observation.state": { "dtype": "float32", "shape": [4] }
+        }
+    });
+
+    std::fs::write(
+        meta_dir.join("info.json"),
+        serde_json::to_string_pretty(&info).unwrap(),
+    )
+    .unwrap();
+
+    tmp
+}
+
+#[test]
+fn detect_format_scored_groot_higher_than_v2_for_nvidia_dataset() {
+    // GR00T detector should score higher than v2 for NVIDIA datasets.
+    let tmp = create_v2_dataset_dir("GR1_humanoid", "v2.0");
+
+    let results = detect_format_scored(tmp.path()).unwrap();
+    assert!(results.len() >= 2, "expected at least 2 detection results");
+
+    // Find GR00T and v2 results.
+    let groot_result = results.iter().find(|r| r.format_name == "groot");
+    let v2_result = results.iter().find(|r| r.format_name == "lerobot-v2");
+
+    assert!(groot_result.is_some(), "GR00T detector should match NVIDIA dataset");
+    assert!(v2_result.is_some(), "v2 detector should also match");
+
+    let groot_confidence = groot_result.unwrap().confidence;
+    let v2_confidence = v2_result.unwrap().confidence;
+    assert!(
+        groot_confidence > v2_confidence,
+        "GR00T confidence ({groot_confidence}) should be higher than v2 ({v2_confidence})"
+    );
+}
+
+#[test]
+fn detect_format_scored_v3_higher_than_v2_for_v3_dataset() {
+    // LeRobot v3 detector should score higher than v2 for v3 datasets.
+    let tmp = create_synthetic_dataset();
+
+    let results = detect_format_scored(tmp.path()).unwrap();
+
+    let v3_result = results.iter().find(|r| r.format_name == "lerobot-v3");
+    assert!(v3_result.is_some(), "v3 detector should match v3 dataset");
+
+    // v2 detector should NOT match a v3 dataset (version check excludes v3).
+    let v2_result = results.iter().find(|r| r.format_name == "lerobot-v2");
+    assert!(v2_result.is_none(), "v2 detector should not match v3 dataset");
+}
+
+#[test]
+fn detect_format_scored_v2_matches_plain_v2_dataset() {
+    // Plain v2 dataset (non-NVIDIA) should match v2 but not GR00T.
+    let tmp = create_v2_dataset_dir("test_robot", "v2.0");
+
+    let results = detect_format_scored(tmp.path()).unwrap();
+
+    let v2_result = results.iter().find(|r| r.format_name == "lerobot-v2");
+    assert!(v2_result.is_some(), "v2 detector should match plain v2 dataset");
+
+    let groot_result = results.iter().find(|r| r.format_name == "groot");
+    assert!(
+        groot_result.is_none(),
+        "GR00T detector should not match plain v2 dataset"
+    );
+}
+
+#[test]
+fn detect_format_scored_returns_sorted_by_confidence() {
+    // Results should be sorted highest confidence first.
+    let tmp = create_v2_dataset_dir("GR1_humanoid", "v2.0");
+
+    let results = detect_format_scored(tmp.path()).unwrap();
+    for window in results.windows(2) {
+        assert!(
+            window[0].confidence >= window[1].confidence,
+            "results not sorted: {} ({}) should be >= {} ({})",
+            window[0].format_name,
+            window[0].confidence,
+            window[1].format_name,
+            window[1].confidence,
+        );
+    }
+}
+
+#[test]
+fn detect_format_scored_error_for_nonexistent_path() {
+    let result = detect_format_scored(Path::new("/nonexistent/path"));
+    assert!(result.is_err(), "should error for nonexistent path");
+}
+
+#[test]
+fn detect_format_delegates_to_scored_system() {
+    // detect_format should return the same format as the top scored result.
+    let tmp = create_synthetic_dataset();
+
+    let detected = crate::detect_format(tmp.path()).unwrap();
+    assert_eq!(detected, "lerobot-v3");
+
+    let scored = detect_format_scored(tmp.path()).unwrap();
+    assert_eq!(
+        detected, scored[0].format_name,
+        "detect_format should return top scored result"
+    );
+}
+
+#[test]
+fn detect_format_error_for_unknown_path() {
+    let tmp = TempDir::new().unwrap();
+    // Empty directory should not match any format.
+    let result = crate::detect_format(tmp.path());
+    assert!(result.is_err(), "should error for empty directory");
+}
+
+// ---- ReadOutput Warning Accessibility Tests ----
+
+#[test]
+fn read_output_new_has_empty_warnings() {
+    let output = ReadOutput::new(vec![1, 2, 3]);
+    assert!(output.warnings.is_empty(), "new ReadOutput should have no warnings");
+    assert_eq!(output.data, vec![1, 2, 3]);
+}
+
+#[test]
+fn read_output_with_warnings_preserves_count() {
+    let warnings = vec![
+        ReadWarning {
+            episode_id: Some("ep0".to_string()),
+            message: "truncated data".to_string(),
+            severity: WarningSeverity::Warning,
+        },
+        ReadWarning {
+            episode_id: None,
+            message: "missing field".to_string(),
+            severity: WarningSeverity::Info,
+        },
+    ];
+    let output = ReadOutput::with_warnings(vec![42], warnings);
+    assert_eq!(output.warnings.len(), 2);
+    assert_eq!(output.data, vec![42]);
+}
+
+#[test]
+fn read_output_has_errors_false_when_no_error_severity() {
+    let warnings = vec![ReadWarning {
+        episode_id: None,
+        message: "info only".to_string(),
+        severity: WarningSeverity::Info,
+    }];
+    let output = ReadOutput::with_warnings(vec![1], warnings);
+    assert!(!output.has_errors(), "should not report errors for Info severity");
+}
+
+#[test]
+fn read_output_has_errors_true_when_error_severity() {
+    let warnings = vec![ReadWarning {
+        episode_id: Some("ep5".to_string()),
+        message: "episode failed".to_string(),
+        severity: WarningSeverity::Error,
+    }];
+    let output = ReadOutput::with_warnings(vec![1], warnings);
+    assert!(output.has_errors(), "should report errors for Error severity");
+}
+
+#[test]
+fn read_output_summary_for_episodes_no_errors() {
+    use forge_core::Episode;
+    let episodes = vec![Episode::new("0"), Episode::new("1")];
+    let output = ReadOutput::new(episodes);
+    let summary = output.summary();
+    assert_eq!(summary, "2 episodes read");
+}
+
+#[test]
+fn read_output_summary_for_episodes_with_skipped() {
+    use forge_core::Episode;
+    let episodes = vec![Episode::new("0")];
+    let warnings = vec![ReadWarning {
+        episode_id: Some("1".to_string()),
+        message: "corrupt data".to_string(),
+        severity: WarningSeverity::Error,
+    }];
+    let output = ReadOutput::with_warnings(episodes, warnings);
+    let summary = output.summary();
+    assert_eq!(summary, "1/2 episodes read, 1 skipped");
+}
+
+#[test]
+fn read_output_from_lerobot_v3_reader_has_accessible_data_and_warnings() {
+    let tmp = create_synthetic_dataset();
+    let reader = LeRobotV3Reader;
+    let output = reader.read_episodes(tmp.path()).unwrap();
+
+    // Data should be accessible.
+    assert_eq!(output.data.len(), NUM_EPISODES);
+
+    // Warnings should be accessible (likely empty for valid dataset).
+    assert!(
+        output.warnings.is_empty(),
+        "valid dataset should produce no warnings"
+    );
+
+    // has_errors should be false.
+    assert!(!output.has_errors());
+
+    // summary should be readable.
+    let summary = output.summary();
+    assert!(
+        summary.contains("episodes read"),
+        "summary should mention episodes: {summary}"
+    );
+}
+
+#[test]
+fn ambiguity_threshold_constant_is_point_one() {
+    assert!(
+        (AMBIGUITY_THRESHOLD - 0.1).abs() < f32::EPSILON,
+        "ambiguity threshold should be 0.1"
+    );
 }
