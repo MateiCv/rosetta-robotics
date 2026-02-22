@@ -321,11 +321,10 @@ fn roundtrip_conversion_preserves_structure() {
     assert_eq!(output_info.total_frames, NUM_EPISODES * FRAMES_PER_EPISODE);
     assert_eq!(output_info.format, "lerobot-v3");
 
-    let episodes: Vec<_> = reader
+    let read_output = reader
         .read_episodes(output)
-        .expect("read_episodes should succeed")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("all episodes should read");
+        .expect("read_episodes should succeed");
+    let episodes = read_output.data;
 
     assert_eq!(episodes.len(), NUM_EPISODES, "should read back all episodes");
 
@@ -478,11 +477,10 @@ fn parallel_conversion_multiple_episodes() {
     let output_info = reader.inspect(output).expect("inspect output");
     assert_eq!(output_info.total_episodes, num_episodes);
 
-    let episodes: Vec<_> = reader
+    let read_output = reader
         .read_episodes(output)
-        .expect("read_episodes")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("all episodes should read");
+        .expect("read_episodes");
+    let episodes = read_output.data;
 
     assert_eq!(episodes.len(), num_episodes);
 

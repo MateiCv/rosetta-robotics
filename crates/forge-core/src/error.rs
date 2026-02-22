@@ -5,7 +5,10 @@
 
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::episode::Episode;
 
 /// Unified error type for all Forge operations.
 ///
@@ -95,4 +98,87 @@ pub struct EpisodeFailure {
     pub context: Vec<String>,
     /// Files affected by this failure (partial output, marker files).
     pub affected_files: Vec<std::path::PathBuf>,
+}
+
+/// Severity level for warnings collected during dataset reading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WarningSeverity {
+    /// Informational message (e.g., "using default value for missing field").
+    Info,
+    /// Non-fatal issue (e.g., "truncated data in episode 42").
+    Warning,
+    /// Serious issue that would be fatal in `--strict` mode.
+    Error,
+}
+
+/// A warning collected during dataset reading.
+///
+/// Readers collect these instead of failing on non-fatal issues. The caller
+/// receives all warnings alongside the successfully read data via [`ReadOutput`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadWarning {
+    /// Episode that triggered the warning, if applicable.
+    pub episode_id: Option<String>,
+    /// Human-readable description of the issue.
+    pub message: String,
+    /// How serious this warning is.
+    pub severity: WarningSeverity,
+}
+
+/// Wrapper that pairs read data with any warnings collected during reading.
+///
+/// Per user decision: lenient by default -- skip broken episodes, collect
+/// warnings, show summary after reading completes.
+#[derive(Debug)]
+pub struct ReadOutput<T> {
+    /// The successfully read data.
+    pub data: T,
+    /// Warnings collected during reading (skipped episodes, truncated data, etc.).
+    pub warnings: Vec<ReadWarning>,
+}
+
+impl<T> ReadOutput<T> {
+    /// Create a new `ReadOutput` with no warnings.
+    pub fn new(data: T) -> Self {
+        Self {
+            data,
+            warnings: Vec::new(),
+        }
+    }
+
+    /// Create a new `ReadOutput` with the given warnings.
+    pub fn with_warnings(data: T, warnings: Vec<ReadWarning>) -> Self {
+        Self { data, warnings }
+    }
+
+    /// Returns `true` if any warning has [`WarningSeverity::Error`] severity.
+    pub fn has_errors(&self) -> bool {
+        self.warnings
+            .iter()
+            .any(|w| w.severity == WarningSeverity::Error)
+    }
+}
+
+impl ReadOutput<Vec<Episode>> {
+    /// Returns a human-readable summary line.
+    ///
+    /// Example: `"47/50 episodes read, 3 skipped"` or `"50 episodes read"`.
+    pub fn summary(&self) -> String {
+        let total_read = self.data.len();
+        let skipped = self
+            .warnings
+            .iter()
+            .filter(|w| w.severity == WarningSeverity::Error)
+            .count();
+        if skipped > 0 {
+            format!(
+                "{}/{} episodes read, {} skipped",
+                total_read,
+                total_read + skipped,
+                skipped
+            )
+        } else {
+            format!("{} episodes read", total_read)
+        }
+    }
 }

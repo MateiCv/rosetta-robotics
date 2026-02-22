@@ -302,11 +302,8 @@ fn read_episodes_yields_correct_structure() {
     let tmp = create_synthetic_dataset();
     let reader = LeRobotV3Reader;
 
-    let episodes: Vec<_> = reader
-        .read_episodes(tmp.path())
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+    let read_output = reader.read_episodes(tmp.path()).unwrap();
+    let episodes = &read_output.data;
 
     assert_eq!(episodes.len(), NUM_EPISODES);
 
@@ -353,11 +350,8 @@ fn read_episodes_action_values_correct() {
     let tmp = create_synthetic_dataset();
     let reader = LeRobotV3Reader;
 
-    let episodes: Vec<_> = reader
-        .read_episodes(tmp.path())
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+    let read_output = reader.read_episodes(tmp.path()).unwrap();
+    let episodes = &read_output.data;
 
     // Verify first frame of first episode has the expected action values.
     let frame0 = &episodes[0].frames[0];
@@ -390,11 +384,8 @@ fn lazy_video_frame_loads_correctly() {
     let tmp = create_synthetic_dataset();
     let reader = LeRobotV3Reader;
 
-    let episodes: Vec<_> = reader
-        .read_episodes(tmp.path())
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+    let read_output = reader.read_episodes(tmp.path()).unwrap();
+    let episodes = &read_output.data;
 
     // Load the first frame's image to verify lazy loading works.
     let frame0 = &episodes[0].frames[0];

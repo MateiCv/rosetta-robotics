@@ -136,15 +136,18 @@ impl Converter {
         // 5. Inspect source.
         let dataset_info = reader.inspect(source_path)?;
 
-        // 6. Collect all episodes from the iterator on the main thread.
-        //    The iterator is Box<dyn Iterator> (not Send), so we must collect
-        //    here before entering the parallel phase. After parallel processing,
-        //    the write phase feeds successfully processed episodes through the
-        //    prefetch channel (crate::prefetch) to overlap preparation of
-        //    episode N+1 with writing of episode N.
-        let episodes_iter = reader.read_episodes(source_path)?;
-        let all_episodes: Vec<(usize, ForgeResult<Episode>)> =
-            episodes_iter.enumerate().collect();
+        // 6. Read all episodes eagerly.
+        //    ReadOutput bundles episodes with any warnings from lenient reading.
+        //    After parallel processing, the write phase feeds successfully
+        //    processed episodes through the prefetch channel (crate::prefetch)
+        //    to overlap preparation of episode N+1 with writing of episode N.
+        let read_output = reader.read_episodes(source_path)?;
+        let all_episodes: Vec<(usize, ForgeResult<Episode>)> = read_output
+            .data
+            .into_iter()
+            .enumerate()
+            .map(|(i, ep)| (i, Ok(ep)))
+            .collect();
 
         let episode_count = all_episodes.len();
 

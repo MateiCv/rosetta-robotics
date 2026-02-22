@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use forge_core::{DatasetInfo, Episode, ForgeResult};
+use forge_core::{DatasetInfo, Episode, ForgeResult, ReadOutput};
 
 /// Reads episodes from a dataset in a specific format.
 ///
@@ -31,12 +31,11 @@ pub trait FormatReader: Send + Sync {
 
     /// Read all episodes from the dataset at `path`.
     ///
-    /// Returns a boxed iterator that yields episodes lazily. Each item may
-    /// fail independently, allowing partial reads of corrupted datasets.
-    fn read_episodes(
-        &self,
-        path: &Path,
-    ) -> ForgeResult<Box<dyn Iterator<Item = ForgeResult<Episode>>>>;
+    /// Returns a [`ReadOutput`] containing the successfully read episodes and
+    /// any warnings collected during reading (skipped episodes, truncated
+    /// data, etc.). Per user decision: lenient by default -- skip broken
+    /// episodes, collect warnings, show summary after reading completes.
+    fn read_episodes(&self, path: &Path) -> ForgeResult<ReadOutput<Vec<Episode>>>;
 }
 
 /// Writes episodes to a dataset in a specific format.

@@ -586,7 +586,7 @@ mod tests {
     use super::*;
     use arrow::datatypes::DataType;
     use bytes::Bytes;
-    use forge_core::{CameraInfo, Dtype, Frame, LazyArray, LazyImage};
+    use forge_core::{CameraInfo, Dtype, Frame, ImageEncoding, LazyArray, LazyImage};
     use tempfile::TempDir;
 
     /// Create a synthetic episode with the given number of frames.
@@ -609,7 +609,7 @@ mod tests {
 
             // 4x4 RGB camera image (must be even dims for H.264).
             let rgb_data = vec![128u8; 4 * 4 * 3];
-            let image = LazyImage::from_bytes(Bytes::from(rgb_data), 4, 4, 3);
+            let image = LazyImage::from_bytes(Bytes::from(rgb_data), 4, 4, 3, ImageEncoding::Raw);
             frame
                 .images
                 .insert("observation.images.top".to_string(), image);

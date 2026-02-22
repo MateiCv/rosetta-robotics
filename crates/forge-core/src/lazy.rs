@@ -13,9 +13,27 @@
 use std::sync::{Mutex, OnceLock};
 
 use bytes::Bytes;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{ForgeError, ForgeResult};
 use crate::schema::Dtype;
+
+/// Describes how the image bytes stored in a [`LazyImage`] are encoded.
+///
+/// Downstream consumers (writers, visualizers) use this to decide whether
+/// to decode the bytes or pass them through as-is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageEncoding {
+    /// Uncompressed RGB/RGBA pixel bytes.
+    Raw,
+    /// JPEG-compressed bytes.
+    Jpeg,
+    /// PNG-compressed bytes.
+    Png,
+    /// Unknown or opaque compression (pass-through).
+    CompressedBytes,
+}
 
 /// Boxed loader closure for image data.
 type ImageLoader = Box<dyn FnOnce() -> Result<Bytes, ForgeError> + Send>;
@@ -34,6 +52,8 @@ pub struct LazyImage {
     pub height: u32,
     pub width: u32,
     pub channels: u8,
+    /// How the stored bytes are encoded (raw pixels, JPEG, PNG, etc.).
+    pub encoding: ImageEncoding,
 }
 
 impl LazyImage {
@@ -43,6 +63,7 @@ impl LazyImage {
         height: u32,
         width: u32,
         channels: u8,
+        encoding: ImageEncoding,
     ) -> Self {
         Self {
             loader: Mutex::new(Some(Box::new(loader))),
@@ -50,11 +71,12 @@ impl LazyImage {
             height,
             width,
             channels,
+            encoding,
         }
     }
 
     /// Create from already-loaded pixel data (no lazy loading needed).
-    pub fn from_bytes(data: Bytes, height: u32, width: u32, channels: u8) -> Self {
+    pub fn from_bytes(data: Bytes, height: u32, width: u32, channels: u8, encoding: ImageEncoding) -> Self {
         let cell = OnceLock::new();
         // Safe to unwrap: cell is freshly created and empty.
         let _ = cell.set(data);
@@ -64,6 +86,7 @@ impl LazyImage {
             height,
             width,
             channels,
+            encoding,
         }
     }
 
@@ -113,6 +136,7 @@ impl std::fmt::Debug for LazyImage {
             .field("height", &self.height)
             .field("width", &self.width)
             .field("channels", &self.channels)
+            .field("encoding", &self.encoding)
             .field("loaded", &self.is_loaded())
             .finish()
     }

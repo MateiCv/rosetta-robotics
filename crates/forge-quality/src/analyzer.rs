@@ -198,20 +198,12 @@ impl QualityAnalyzer {
         let info = reader.inspect(path)?;
         let dataset_fps = info.fps;
 
-        let episodes_iter = reader.read_episodes(path)?;
+        let read_output = reader.read_episodes(path)?;
         let mut per_episode = Vec::new();
 
-        for episode_result in episodes_iter {
-            match episode_result {
-                Ok(episode) => {
-                    let eq = self.analyze_episode(&episode, dataset_fps);
-                    per_episode.push(eq);
-                }
-                Err(e) => {
-                    // Log but continue -- partial analysis is better than no analysis.
-                    eprintln!("Warning: skipping episode due to error: {e}");
-                }
-            }
+        for episode in &read_output.data {
+            let eq = self.analyze_episode(episode, dataset_fps);
+            per_episode.push(eq);
         }
 
         // Compute overall score as mean of non-None composite scores.

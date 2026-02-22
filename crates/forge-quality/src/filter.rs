@@ -77,7 +77,7 @@ impl FilterEngine {
 
         let info = reader.inspect(source)?;
         let dataset_fps = info.fps;
-        let episodes_iter = reader.read_episodes(source)?;
+        let read_output = reader.read_episodes(source)?;
 
         let mut kept_ids = Vec::new();
         let mut excluded_ids = Vec::new();
@@ -85,14 +85,7 @@ impl FilterEngine {
         let mut kept_index = 0usize;
         let mut total_kept_frames = 0usize;
 
-        for episode_result in episodes_iter {
-            let episode = match episode_result {
-                Ok(ep) => ep,
-                Err(e) => {
-                    eprintln!("Warning: skipping episode due to read error: {e}");
-                    continue;
-                }
-            };
+        for episode in read_output.data {
 
             let episode_idx = episode.index().unwrap_or(0) as usize;
 
@@ -386,7 +379,7 @@ fn validate_paths(source: &Path, output: &Path) -> ForgeResult<()> {
 mod tests {
     use super::*;
     use forge_core::schema::Dtype;
-    use forge_core::{DatasetInfo, Frame, LazyArray};
+    use forge_core::{DatasetInfo, Frame, LazyArray, ReadOutput};
     use crate::metrics::MetricKind;
     use std::path::PathBuf;
     use std::sync::Mutex;
@@ -477,17 +470,19 @@ mod tests {
         fn read_episodes(
             &self,
             _path: &Path,
-        ) -> ForgeResult<Box<dyn Iterator<Item = ForgeResult<Episode>>>> {
-            let params = self.episode_params.clone();
-            Ok(Box::new(params.into_iter().map(
-                |(id, frames, base, is_dead)| {
-                    if is_dead {
-                        Ok(make_dead_episode(&id, frames))
+        ) -> ForgeResult<ReadOutput<Vec<Episode>>> {
+            let episodes: Vec<Episode> = self
+                .episode_params
+                .iter()
+                .map(|(id, frames, base, is_dead)| {
+                    if *is_dead {
+                        make_dead_episode(id, *frames)
                     } else {
-                        Ok(make_episode(&id, frames, base))
+                        make_episode(id, *frames, *base)
                     }
-                },
-            )))
+                })
+                .collect();
+            Ok(ReadOutput::new(episodes))
         }
     }
 

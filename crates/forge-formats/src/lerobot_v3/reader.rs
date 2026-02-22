@@ -13,7 +13,7 @@ use bytes::Bytes;
 
 use forge_core::{
     CameraInfo, DatasetInfo, Dtype, Episode, FieldSchema, ForgeError, ForgeResult, Frame,
-    LazyArray, LazyImage,
+    ImageEncoding, LazyArray, LazyImage, ReadOutput,
 };
 
 use crate::traits::FormatReader;
@@ -110,10 +110,7 @@ impl FormatReader for LeRobotV3Reader {
         })
     }
 
-    fn read_episodes(
-        &self,
-        path: &Path,
-    ) -> ForgeResult<Box<dyn Iterator<Item = ForgeResult<Episode>>>> {
+    fn read_episodes(&self, path: &Path) -> ForgeResult<ReadOutput<Vec<Episode>>> {
         let info = info::read_info(path)?;
         let episode_metadata = parquet_io::read_episode_metadata(path, &info)?;
 
@@ -144,18 +141,20 @@ impl FormatReader for LeRobotV3Reader {
         let info = Arc::new(info);
         let all_batches = Arc::new(all_batches);
 
-        // Build an iterator over episodes.
-        let iter = episode_metadata.into_iter().map(move |meta| {
-            build_episode(
+        // Build all episodes eagerly, propagating errors.
+        let mut episodes = Vec::with_capacity(episode_metadata.len());
+        for meta in &episode_metadata {
+            let episode = build_episode(
                 &dataset_path,
                 &info,
                 &all_batches,
-                &meta,
+                meta,
                 &video_features,
-            )
-        });
+            )?;
+            episodes.push(episode);
+        }
 
-        Ok(Box::new(iter))
+        Ok(ReadOutput::new(episodes))
     }
 }
 
@@ -263,6 +262,7 @@ fn build_episode(
                 h,
                 w,
                 c,
+                ImageEncoding::Raw,
             );
 
             frame.images.insert(video_key.clone(), image);
