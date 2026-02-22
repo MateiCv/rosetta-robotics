@@ -48,12 +48,13 @@ Plans:
   3. H.264 MP4 video files produced by the encoder match LeRobot v3 conventions (CRF, preset, profile, pixel format) and frame counts exactly match Parquet timestamp columns
   4. Running `forge formats` lists all supported formats with their read/write capabilities
   5. Field mapping and camera name remapping are applied during conversion as specified in config
-**Plans**: TBD
+**Plans:** 4 plans
 
 Plans:
-- [ ] 02-01: TBD
-- [ ] 02-02: TBD
-- [ ] 02-03: TBD
+- [ ] 02-01-PLAN.md -- forge-video H.264 encoder and decoder (ffmpeg-next)
+- [ ] 02-02-PLAN.md -- FormatReader/FormatWriter traits, registry, and `forge formats` CLI
+- [ ] 02-03-PLAN.md -- LeRobot v3 reader (info.json, Parquet I/O, video decode)
+- [ ] 02-04-PLAN.md -- LeRobot v3 writer, conversion pipeline, and round-trip integration test
 
 ### Phase 3: Parallel Pipeline and Error Handling
 **Goal**: The conversion pipeline processes episodes in parallel with automatic error recovery, zero-copy video flow, and real-time progress feedback
@@ -161,7 +162,7 @@ Note: Phase 5 depends on Phase 2 (not Phase 4), so Phases 3-4 and Phase 5 could 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Core Types and Project Scaffolding | 2/2 | Complete    | 2026-02-22 |
-| 2. LeRobot v3 End-to-End Pipeline | 0/? | Not started | - |
+| 2. LeRobot v3 End-to-End Pipeline | 0/4 | Not started | - |
 | 3. Parallel Pipeline and Error Handling | 0/? | Not started | - |
 | 4. Quality Analysis and Filtering | 0/? | Not started | - |
 | 5. Remaining Format Readers | 0/? | Not started | - |
