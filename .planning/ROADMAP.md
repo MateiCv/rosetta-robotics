@@ -66,11 +66,12 @@ Plans:
   3. Running the same conversion twice with deterministic mode produces bit-for-bit identical output
   4. Progress bars display episode count, ETA, throughput (episodes/sec), and memory usage during long conversions
   5. Video frames flow through the read-transform-encode chain without intermediate buffer copies (zero-copy pipeline)
-**Plans**: TBD
+**Plans:** 3 plans
 
 Plans:
-- [ ] 03-01: TBD
-- [ ] 03-02: TBD
+- [ ] 03-01-PLAN.md -- Zero-copy video frames (Bytes), new dependencies, ConversionConfig extensions, EpisodeFailure type
+- [ ] 03-02-PLAN.md -- Parallel rayon Converter with ErrorCollector, deterministic mode, memory throttling
+- [ ] 03-03-PLAN.md -- Progress reporting with memory tracking, prefetch pipeline, CLI flags, marker files
 
 ### Phase 4: Quality Analysis and Filtering
 **Goal**: Users can analyze dataset quality with streaming metrics, filter episodes by quality scores, and export results for downstream tools
