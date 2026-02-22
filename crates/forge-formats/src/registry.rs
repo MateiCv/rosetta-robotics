@@ -14,6 +14,8 @@ use crate::lerobot_v3::reader::LeRobotV3Reader;
 use crate::lerobot_v3::writer::LeRobotV3Writer;
 #[cfg(feature = "rlds-format")]
 use crate::rlds::RLDSReader;
+#[cfg(feature = "rosbag-format")]
+use crate::rosbag::RosbagReader;
 use crate::traits::{FormatReader, FormatWriter};
 #[cfg(feature = "zarr-format")]
 use crate::zarr::ZarrReader;
@@ -97,6 +99,14 @@ pub fn detect_format(path: &Path) -> ForgeResult<&'static str> {
         }
     }
 
+    #[cfg(feature = "rosbag-format")]
+    {
+        let rosbag_reader = RosbagReader;
+        if rosbag_reader.can_read(path) {
+            return Ok("rosbag");
+        }
+    }
+
     Err(ForgeError::FormatDetection {
         path: path.to_path_buf(),
     })
@@ -112,6 +122,8 @@ pub fn get_reader(format_name: &str) -> ForgeResult<Box<dyn FormatReader>> {
         "rlds" => Ok(Box::new(RLDSReader)),
         #[cfg(feature = "zarr-format")]
         "zarr" => Ok(Box::new(ZarrReader)),
+        #[cfg(feature = "rosbag-format")]
+        "rosbag" => Ok(Box::new(RosbagReader)),
         _ => Err(ForgeError::UnsupportedFormat {
             format_name: format_name.to_string(),
             available: all_formats().iter().map(|f| f.name.to_string()).collect(),

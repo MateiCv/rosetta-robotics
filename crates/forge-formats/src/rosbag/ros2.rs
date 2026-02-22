@@ -346,6 +346,7 @@ impl<'a> CdrReader<'a> {
         })
     }
 
+    #[allow(dead_code)]
     fn remaining(&self) -> usize {
         self.data.len().saturating_sub(self.pos)
     }

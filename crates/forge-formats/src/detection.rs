@@ -17,6 +17,8 @@ use crate::lerobot_v2::LeRobotV2Detector;
 use crate::lerobot_v3::reader::LeRobotV3Reader;
 #[cfg(feature = "rlds-format")]
 use crate::rlds::RLDSDetector;
+#[cfg(feature = "rosbag-format")]
+use crate::rosbag::RosbagDetector;
 use crate::traits::FormatReader;
 #[cfg(feature = "zarr-format")]
 use crate::zarr::ZarrDetector;
@@ -74,7 +76,8 @@ pub fn detect_format_scored(path: &Path) -> ForgeResult<Vec<DetectionResult>> {
         #[cfg(feature = "zarr-format")]
         Box::new(ZarrDetector),
         // Box::new(HDF5Detector),
-        // Box::new(RosbagDetector),
+        #[cfg(feature = "rosbag-format")]
+        Box::new(RosbagDetector),
         Box::new(LeRobotV3Detector),
         Box::new(LeRobotV2Detector),
     ];
