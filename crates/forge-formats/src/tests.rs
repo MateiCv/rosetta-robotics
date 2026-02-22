@@ -733,3 +733,288 @@ fn ambiguity_threshold_constant_is_point_one() {
         "ambiguity threshold should be 0.1"
     );
 }
+
+// ---- Round-trip Integration Tests ----
+
+use bytes::Bytes;
+use forge_core::{CameraInfo, DatasetInfo, Dtype, Frame, ImageEncoding, LazyArray, LazyImage};
+use std::collections::HashMap;
+
+/// Create a synthetic test episode with deterministic data.
+fn make_test_episode(episode_index: usize, num_frames: usize) -> forge_core::Episode {
+    let mut episode = forge_core::Episode::new(episode_index.to_string());
+    episode
+        .metadata
+        .insert("task_index".to_string(), serde_json::json!(0));
+
+    for fi in 0..num_frames {
+        let mut frame = Frame::new(fi);
+
+        // 4-dim action: deterministic values.
+        let action_data: Vec<f64> = (0..4).map(|d| (fi * 4 + d) as f64 * 0.1).collect();
+        frame.action = Some(LazyArray::from_vec(action_data, vec![4], Dtype::Float64));
+
+        // 4-dim state: deterministic values.
+        let state_data: Vec<f64> = (0..4).map(|d| (fi * 4 + d) as f64 * 0.01).collect();
+        frame.state = Some(LazyArray::from_vec(state_data, vec![4], Dtype::Float64));
+
+        // 4x4 RGB raw image (even dims for H.264 compat).
+        let rgb_data = vec![128u8; 4 * 4 * 3];
+        let image = LazyImage::from_bytes(Bytes::from(rgb_data), 4, 4, 3, ImageEncoding::Raw);
+        frame
+            .images
+            .insert("observation.images.top".to_string(), image);
+
+        episode.frames.push(frame);
+    }
+
+    episode
+}
+
+/// Create a DatasetInfo for test datasets.
+fn make_test_dataset_info(format: &str, num_episodes: usize, total_frames: usize) -> DatasetInfo {
+    DatasetInfo {
+        format: format.to_string(),
+        path: std::path::PathBuf::from("/tmp"),
+        total_episodes: num_episodes,
+        total_frames,
+        fps: Some(30.0),
+        robot_type: Some("test_robot".to_string()),
+        fields: vec![],
+        cameras: vec![CameraInfo {
+            name: "observation.images.top".to_string(),
+            height: 4,
+            width: 4,
+            channels: 3,
+            encoding: "rgb".to_string(),
+        }],
+        metadata: HashMap::new(),
+    }
+}
+
+/// Run a round-trip test for a given format: write 2 episodes, read back, compare.
+fn run_round_trip_test(format_name: &str, epsilon: f64) {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let output = tmp.path();
+
+    // Get writer and write episodes.
+    let mut writer = crate::get_writer(format_name)
+        .unwrap_or_else(|e| panic!("get_writer({format_name}) failed: {e}"));
+    writer.set_deterministic(true);
+
+    let ep0 = make_test_episode(0, 5);
+    let ep1 = make_test_episode(1, 5);
+    writer.write_episode(&ep0, output, 0).unwrap();
+    writer.write_episode(&ep1, output, 1).unwrap();
+
+    let info = make_test_dataset_info(format_name, 2, 10);
+    writer.finalize(output, &info).unwrap();
+
+    // Read back with the reader.
+    let reader = crate::get_reader(format_name)
+        .unwrap_or_else(|e| panic!("get_reader({format_name}) failed: {e}"));
+    let read_output = reader
+        .read_episodes(output)
+        .unwrap_or_else(|e| panic!("read_episodes({format_name}) failed: {e}"));
+
+    // Assert episode count.
+    assert_eq!(
+        read_output.data.len(),
+        2,
+        "{format_name}: expected 2 episodes, got {}",
+        read_output.data.len()
+    );
+
+    // Assert frame count for each episode.
+    for (ep_idx, episode) in read_output.data.iter().enumerate() {
+        assert_eq!(
+            episode.frames.len(),
+            5,
+            "{format_name}: episode {ep_idx} expected 5 frames, got {}",
+            episode.frames.len()
+        );
+
+        // Verify action data for first frame.
+        let first_frame = &episode.frames[0];
+        if let Some(action) = &first_frame.action {
+            let action_data = action.load().unwrap();
+            assert!(
+                action_data.len() >= 4,
+                "{format_name}: ep {ep_idx} action should have at least 4 dims, got {}",
+                action_data.len()
+            );
+        }
+
+        // Verify state data for first frame.
+        if let Some(state) = &first_frame.state {
+            let state_data = state.load().unwrap();
+            assert!(
+                state_data.len() >= 4,
+                "{format_name}: ep {ep_idx} state should have at least 4 dims, got {}",
+                state_data.len()
+            );
+        }
+
+        // Verify numeric data precision for first frame of first episode.
+        if ep_idx == 0 {
+            if let Some(action) = &first_frame.action {
+                let action_data = action.load().unwrap();
+                for d in 0..4 {
+                    let expected = d as f64 * 0.1;
+                    assert!(
+                        (action_data[d] - expected).abs() < epsilon,
+                        "{format_name}: action[{d}] = {}, expected {} (epsilon={epsilon})",
+                        action_data[d],
+                        expected
+                    );
+                }
+            }
+            if let Some(state) = &first_frame.state {
+                let state_data = state.load().unwrap();
+                for d in 0..4 {
+                    let expected = d as f64 * 0.01;
+                    assert!(
+                        (state_data[d] - expected).abs() < epsilon,
+                        "{format_name}: state[{d}] = {}, expected {} (epsilon={epsilon})",
+                        state_data[d],
+                        expected
+                    );
+                }
+            }
+        }
+
+        // Verify images exist (dimensions may differ due to encoding).
+        assert!(
+            !first_frame.images.is_empty(),
+            "{format_name}: ep {ep_idx} should have at least one image"
+        );
+    }
+}
+
+#[test]
+fn round_trip_lerobot_v3() {
+    run_round_trip_test("lerobot-v3", 1e-5);
+}
+
+#[test]
+fn round_trip_lerobot_v2() {
+    run_round_trip_test("lerobot-v2", 1e-5);
+}
+
+#[cfg(feature = "rlds-format")]
+#[test]
+fn round_trip_rlds() {
+    run_round_trip_test("rlds", 1e-5);
+}
+
+#[cfg(feature = "hdf5-format")]
+#[test]
+fn round_trip_hdf5() {
+    run_round_trip_test("hdf5", 1e-5);
+}
+
+#[cfg(feature = "zarr-format")]
+#[test]
+fn round_trip_zarr() {
+    run_round_trip_test("zarr", 1e-5);
+}
+
+#[cfg(feature = "rosbag-format")]
+#[test]
+fn round_trip_rosbag() {
+    run_round_trip_test("rosbag", 1e-10);
+}
+
+#[cfg(feature = "robodm-format")]
+#[test]
+fn round_trip_robodm() {
+    // RoboDM uses heuristic EBML element classification. Small test images
+    // (48 bytes, below IMAGE_SIZE_THRESHOLD) are misclassified as numeric
+    // arrays, which affects frame boundary detection. Use a custom test
+    // instead of the generic run_round_trip_test.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let output = tmp.path();
+
+    let mut writer = crate::get_writer("robodm").unwrap();
+    writer.set_deterministic(true);
+
+    let ep0 = make_test_episode(0, 5);
+    let ep1 = make_test_episode(1, 5);
+    writer.write_episode(&ep0, output, 0).unwrap();
+    writer.write_episode(&ep1, output, 1).unwrap();
+
+    let info = make_test_dataset_info("robodm", 2, 10);
+    writer.finalize(output, &info).unwrap();
+
+    // Read back via the reader.
+    let reader = crate::get_reader("robodm").unwrap();
+    let read_output = reader.read_episodes(output).unwrap();
+
+    // Should have 2 episodes (one per .vla file).
+    assert_eq!(
+        read_output.data.len(),
+        2,
+        "robodm: expected 2 episodes, got {}",
+        read_output.data.len()
+    );
+
+    // Each episode should have at least 1 frame (heuristic grouping may
+    // produce different frame counts than the original).
+    for (ep_idx, episode) in read_output.data.iter().enumerate() {
+        assert!(
+            !episode.frames.is_empty(),
+            "robodm: episode {ep_idx} should have at least 1 frame"
+        );
+
+        // Verify any recovered numeric data is finite.
+        for frame in &episode.frames {
+            if let Some(action) = &frame.action {
+                let vals = action.load().unwrap();
+                for &v in vals.iter() {
+                    assert!(v.is_finite(), "robodm: action values should be finite");
+                }
+            }
+            if let Some(state) = &frame.state {
+                let vals = state.load().unwrap();
+                for &v in vals.iter() {
+                    assert!(v.is_finite(), "robodm: state values should be finite");
+                }
+            }
+        }
+    }
+}
+
+// ---- Additional Integration Tests ----
+
+#[test]
+fn all_writable_formats_registered() {
+    let formats = crate::all_formats();
+    let writable: Vec<&str> = formats.iter().filter(|f| f.can_write).map(|f| f.name).collect();
+    assert_eq!(writable.len(), 7, "expected 7 writable formats, got {}: {:?}", writable.len(), writable);
+
+    // Verify get_writer succeeds for each writable format.
+    for name in &writable {
+        let result = crate::get_writer(name);
+        assert!(
+            result.is_ok(),
+            "get_writer({name}) should succeed but got: {:?}",
+            result.err()
+        );
+    }
+}
+
+#[test]
+fn groot_not_writable() {
+    let result = crate::get_writer("groot");
+    assert!(result.is_err(), "get_writer(groot) should fail since GR00T is read-only");
+    match result {
+        Err(e) => {
+            let err_msg = format!("{e}");
+            assert!(
+                err_msg.contains("groot") || err_msg.contains("Unsupported") || err_msg.contains("unsupported"),
+                "error should mention the format: {err_msg}"
+            );
+        }
+        Ok(_) => panic!("get_writer(groot) should have returned Err"),
+    }
+}
