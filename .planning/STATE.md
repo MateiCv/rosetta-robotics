@@ -11,9 +11,9 @@ See: .planning/PROJECT.md (updated 2026-02-21)
 
 Milestone: v2.0 Format Breadth & Distribution
 Phase: 06-remaining-format-writers
-Current Plan: 1 of 4
+Current Plan: 3 of 4
 Status: Executing
-Last activity: 2026-02-22 — Plan 06-01 complete (RLDS + LeRobot v2 writers)
+Last activity: 2026-02-22 — Plan 06-02 complete (HDF5 + Zarr writers)
 
 ## Performance Metrics
 
@@ -37,6 +37,8 @@ Last activity: 2026-02-22 — Plan 06-01 complete (RLDS + LeRobot v2 writers)
 | 05 | 03 - HDF5 Format Reader | 10min | 2 | 6 |
 | 05 | 08 - Format Registry Integration | 4min | 2 | 4 |
 | 06 | 01 - RLDS + LeRobot v2 Writers | 6min | 2 | 4 |
+| 06 | 02 - HDF5 + Zarr Writers | 8min | 2 | 8 |
+| 06 | 03 - ROS Bag + RoboDM Writers | 7min | 2 | 4 |
 
 ## Accumulated Context
 
@@ -73,6 +75,10 @@ Key decisions carried forward to PROJECT.md Key Decisions table.
 - [06-01] Metadata features from frame.metadata round-tripped back through TFRecord features
 - [06-01] LeRobot v2 writer reuses lerobot_v3::parquet_io for schema building and parquet writing
 - [06-01] JSON keys always sorted for deterministic output (not conditional on deterministic flag)
+- [06-03] Flat EBML structure (no master nesting) for round-trip compatibility with reader's flat parser
+- [06-03] CdrWriter placed in writer.rs (not ros2.rs) to keep reader module clean
+- [06-03] Float64MultiArray used for action data as most general ROS 2 numeric array type
+- [06-03] Auto-generated joint names (joint_0, joint_1, ...) for state JointState messages
 
 ### Pending Todos
 
@@ -93,6 +99,6 @@ Key items:
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Completed 06-01-PLAN.md (RLDS + LeRobot v2 writers)
-Next: 06-02-PLAN.md
+Stopped at: Completed 06-03-PLAN.md (ROS bag + RoboDM writers)
+Next: 06-04-PLAN.md (Format Registry Integration)
 Resume file: .planning/ROADMAP.md
