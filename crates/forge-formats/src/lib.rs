@@ -19,6 +19,8 @@ pub mod registry;
 pub mod rlds;
 #[cfg(feature = "robodm-format")]
 pub mod robodm;
+#[cfg(feature = "rosbag-format")]
+pub mod rosbag;
 pub mod traits;
 
 // Re-export key types for convenience.
