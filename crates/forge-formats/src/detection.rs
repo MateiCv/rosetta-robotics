@@ -13,6 +13,8 @@ use std::path::Path;
 use forge_core::{ForgeError, ForgeResult};
 
 use crate::groot::GR00TDetector;
+#[cfg(feature = "hdf5-format")]
+use crate::hdf5::HDF5Detector;
 use crate::lerobot_v2::LeRobotV2Detector;
 use crate::lerobot_v3::reader::LeRobotV3Reader;
 #[cfg(feature = "rlds-format")]
@@ -75,7 +77,8 @@ pub fn detect_format_scored(path: &Path) -> ForgeResult<Vec<DetectionResult>> {
         Box::new(RLDSDetector),
         #[cfg(feature = "zarr-format")]
         Box::new(ZarrDetector),
-        // Box::new(HDF5Detector),
+        #[cfg(feature = "hdf5-format")]
+        Box::new(HDF5Detector),
         #[cfg(feature = "rosbag-format")]
         Box::new(RosbagDetector),
         Box::new(LeRobotV3Detector),

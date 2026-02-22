@@ -9,6 +9,8 @@ use std::path::Path;
 use forge_core::{ForgeError, ForgeResult};
 
 use crate::groot::reader::GR00TReader;
+#[cfg(feature = "hdf5-format")]
+use crate::hdf5::HDF5Reader;
 use crate::lerobot_v2::reader::LeRobotV2Reader;
 use crate::lerobot_v3::reader::LeRobotV3Reader;
 use crate::lerobot_v3::writer::LeRobotV3Writer;
@@ -99,6 +101,14 @@ pub fn detect_format(path: &Path) -> ForgeResult<&'static str> {
         }
     }
 
+    #[cfg(feature = "hdf5-format")]
+    {
+        let hdf5_reader = HDF5Reader;
+        if hdf5_reader.can_read(path) {
+            return Ok("hdf5");
+        }
+    }
+
     #[cfg(feature = "rosbag-format")]
     {
         let rosbag_reader = RosbagReader;
@@ -122,6 +132,8 @@ pub fn get_reader(format_name: &str) -> ForgeResult<Box<dyn FormatReader>> {
         "rlds" => Ok(Box::new(RLDSReader)),
         #[cfg(feature = "zarr-format")]
         "zarr" => Ok(Box::new(ZarrReader)),
+        #[cfg(feature = "hdf5-format")]
+        "hdf5" => Ok(Box::new(HDF5Reader)),
         #[cfg(feature = "rosbag-format")]
         "rosbag" => Ok(Box::new(RosbagReader)),
         _ => Err(ForgeError::UnsupportedFormat {

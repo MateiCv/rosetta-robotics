@@ -644,7 +644,7 @@ fn read_group_attrs(group: &hdf5::Group) -> HashMap<String, serde_json::Value> {
 }
 
 /// Read all HDF5 attributes from the file root.
-fn read_group_attrs_from_file(file: &hdf5::File) -> HashMap<String, serde_json::Value> {
+pub(crate) fn read_group_attrs_from_file(file: &hdf5::File) -> HashMap<String, serde_json::Value> {
     let mut metadata = HashMap::new();
     let attr_names = file.attr_names().unwrap_or_default();
 
