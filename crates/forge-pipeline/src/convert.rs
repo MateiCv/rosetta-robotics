@@ -13,6 +13,7 @@ use forge_core::{ConversionConfig, Episode, EpisodeFailure, ForgeError, ForgeRes
 use forge_formats::registry;
 
 use crate::error_collector::{print_failure_summary, ErrorCollector};
+use crate::prefetch::prefetch_items;
 use crate::progress::{ProgressMode, ProgressReporter};
 
 /// Result of a conversion operation.
@@ -137,11 +138,10 @@ impl Converter {
 
         // 6. Collect all episodes from the iterator on the main thread.
         //    The iterator is Box<dyn Iterator> (not Send), so we must collect
-        //    here before entering the parallel phase. The prefetch module
-        //    (crate::prefetch) is available for Send iterators and will be
-        //    used directly when FormatReader is updated to return Send
-        //    iterators. For now, collecting on the main thread provides the
-        //    same correctness with sequential I/O.
+        //    here before entering the parallel phase. After parallel processing,
+        //    the write phase feeds successfully processed episodes through the
+        //    prefetch channel (crate::prefetch) to overlap preparation of
+        //    episode N+1 with writing of episode N.
         let episodes_iter = reader.read_episodes(source_path)?;
         let all_episodes: Vec<(usize, ForgeResult<Episode>)> =
             episodes_iter.enumerate().collect();
@@ -204,7 +204,8 @@ impl Converter {
 
         // Phase 2 (Sequential Write):
         // Merge read failures and processed results, sort by episode index,
-        // and write in order.
+        // separate failures from successes, handle failures first, then feed
+        // successes through the prefetch channel for overlapped writing.
         let mut all_results: Vec<(usize, Result<Episode, ForgeError>)> = processed;
 
         // Add read failures.
@@ -228,36 +229,46 @@ impl Converter {
 
         let target_format_str = target_format.to_string();
 
+        // Separate failures from successes for prefetch.
+        let mut successes: Vec<(usize, Episode)> = Vec::new();
         for (episode_index, episode_result) in all_results {
             match episode_result {
-                Ok(episode) => {
-                    // Write episode.
-                    match writer.write_episode(&episode, output_path, episode_index) {
-                        Ok(()) => {
-                            result.total_frames += episode.frame_count();
-                            result.episodes_converted += 1;
-                        }
-                        Err(e) => {
-                            let msg =
-                                format!("episode {episode_index} write failed: {e}");
-                            progress.fail(episode_index, &msg);
-                            write_failure_marker(output_path, episode_index, &msg);
-                            if self.config.fail_on_error {
-                                progress.finish();
-                                return Err(ForgeError::Conversion {
-                                    source_format: source_format.clone(),
-                                    target_format: target_format_str,
-                                    reason: msg,
-                                });
-                            }
-                            error_collector.record(episode_index, &e, vec![]);
-                            result.errors.push(msg);
-                            result.episodes_failed += 1;
-                        }
-                    }
-                }
+                Ok(episode) => successes.push((episode_index, episode)),
                 Err(e) => {
                     let msg = format!("episode {episode_index} failed: {e}");
+                    progress.fail(episode_index, &msg);
+                    write_failure_marker(output_path, episode_index, &msg);
+                    if self.config.fail_on_error {
+                        progress.finish();
+                        return Err(ForgeError::Conversion {
+                            source_format: source_format.clone(),
+                            target_format: target_format_str,
+                            reason: msg,
+                        });
+                    }
+                    error_collector.record(episode_index, &e, vec![]);
+                    result.errors.push(msg);
+                    result.episodes_failed += 1;
+                }
+            }
+        }
+
+        // Feed successes through prefetch channel (buffer_size=2 for overlap).
+        // The background thread stages the next episode in memory while the
+        // main thread writes the current episode, overlapping preparation
+        // with I/O. Order is preserved because successes are pre-sorted by
+        // episode index and prefetch_items maintains iteration order.
+        let prefetch_rx = prefetch_items(successes.into_iter(), 2);
+
+        // Write from prefetch channel.
+        for (episode_index, episode) in prefetch_rx {
+            match writer.write_episode(&episode, output_path, episode_index) {
+                Ok(()) => {
+                    result.total_frames += episode.frame_count();
+                    result.episodes_converted += 1;
+                }
+                Err(e) => {
+                    let msg = format!("episode {episode_index} write failed: {e}");
                     progress.fail(episode_index, &msg);
                     write_failure_marker(output_path, episode_index, &msg);
                     if self.config.fail_on_error {

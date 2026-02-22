@@ -15,21 +15,58 @@ use crossbeam_channel::{bounded, Receiver};
 
 use forge_core::{Episode, ForgeResult};
 
+/// Generic prefetch: spawn a background thread that pushes items from an
+/// iterator into a bounded crossbeam channel. Returns a Receiver the
+/// consumer can iterate over.
+///
+/// When the channel is full (capacity reached), the producer blocks until
+/// the consumer reads -- natural backpressure. The channel closes when the
+/// iterator is exhausted or the consumer drops the receiver.
+///
+/// # Arguments
+///
+/// * `items` - Iterator of items (must be `Send` for thread transfer).
+/// * `buffer_size` - Bounded channel capacity. Use 2 for episode-level
+///   prefetch (small enough to avoid memory pressure, large enough to
+///   hide I/O latency).
+///
+/// # Returns
+///
+/// A `Receiver` that yields items as they are produced by the background
+/// thread. The channel closes when the iterator is exhausted.
+pub fn prefetch_items<T, I>(
+    items: I,
+    buffer_size: usize,
+) -> Receiver<T>
+where
+    T: Send + 'static,
+    I: Iterator<Item = T> + Send + 'static,
+{
+    let (tx, rx) = bounded(buffer_size);
+
+    std::thread::spawn(move || {
+        for item in items {
+            if tx.send(item).is_err() {
+                break; // Consumer dropped the receiver
+            }
+        }
+        // tx drops here, closing the channel
+    });
+
+    rx
+}
+
 /// Prefetch episodes from an iterator into a bounded channel.
 ///
-/// Spawns a background thread that reads episodes from the iterator and
-/// sends them into a bounded channel. The consumer (Converter) receives
-/// episodes from the channel. When the channel is full (capacity reached),
-/// the producer blocks until the consumer reads -- natural backpressure.
-///
-/// This overlaps episode reading/decoding with episode writing, improving
-/// throughput for I/O-bound workloads.
+/// Convenience wrapper around [`prefetch_items`] for the common case of
+/// prefetching `ForgeResult<Episode>` items. Spawns a background thread
+/// that reads episodes and sends them into a bounded channel, overlapping
+/// episode reading/decoding with episode writing.
 ///
 /// # Arguments
 ///
 /// * `episodes` - Iterator of episodes (must be `Send` for thread transfer).
-/// * `buffer_size` - Bounded channel capacity. Default should be 2 (small
-///   enough to avoid memory pressure, large enough to hide I/O latency).
+/// * `buffer_size` - Bounded channel capacity. Default should be 2.
 ///
 /// # Returns
 ///
@@ -42,18 +79,7 @@ pub fn prefetch_episodes<I>(
 where
     I: Iterator<Item = ForgeResult<Episode>> + Send + 'static,
 {
-    let (tx, rx) = bounded(buffer_size);
-
-    std::thread::spawn(move || {
-        for episode in episodes {
-            if tx.send(episode).is_err() {
-                break; // Consumer dropped the receiver
-            }
-        }
-        // tx drops here, closing the channel
-    });
-
-    rx
+    prefetch_items(episodes, buffer_size)
 }
 
 #[cfg(test)]
