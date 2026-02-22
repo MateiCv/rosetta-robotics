@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-21)
 
 **Core value:** Convert any robotics dataset format to any other format as fast as the hardware allows, without losing data fidelity.
-**Current focus:** Phase 3 - Parallel Pipeline and Error Handling
+**Current focus:** Phase 4 - Quality Analysis and Filtering
 
 ## Current Position
 
-Phase: 3 of 8 (Parallel Pipeline and Error Handling)
-Plan: 4 of 4 in current phase (4 complete)
-Status: Phase 3 Complete
-Last activity: 2026-02-22 -- Completed 03-04 Prefetch Pipeline Integration (VID-04 gap closure)
+Phase: 4 of 8 (Quality Analysis and Filtering)
+Plan: 2 of 4 in current phase (2 complete)
+Status: In Progress
+Last activity: 2026-02-22 -- Completed 04-02 Quality Metric Accumulators
 
-Progress: [██████████] 100% (Phase 3)
+Progress: [█████░░░░░] 50% (Phase 4)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 9
+- Total plans completed: 11
 - Average duration: 5min
-- Total execution time: 0.8 hours
+- Total execution time: 0.9 hours
 
 **By Phase:**
 
@@ -34,6 +34,8 @@ Progress: [██████████] 100% (Phase 3)
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 04 P02 | 7min | 2 tasks | 8 files |
+| Phase 04 P01 | 4min | 2 tasks | 8 files |
 | Phase 03 P04 | 2min | 1 tasks | 3 files |
 | Phase 03 P03 | 6min | 2 tasks | 6 files |
 | Phase 03 P02 | 7min | 2 tasks | 8 files |
@@ -82,6 +84,12 @@ Recent decisions affecting current work:
 - [Phase 03]: CLI outputs info/progress to stderr (not stdout) so --json produces clean piped output
 - [Phase 03]: Separate failures from successes before prefetch channel -- errors handled immediately, only valid episodes enter prefetch pipeline
 - [Phase 03]: buffer_size=2 for prefetch channel matches VID-04 ring buffer semantics (avoid memory pressure, hide I/O latency)
+- [Phase 04]: Default metric weights: smoothness=0.25, dead_actions=0.20, static_detection=0.15, gripper_chatter=0.10, timestamp_regularity=0.10, action_saturation=0.10, action_entropy=0.10
+- [Phase 04]: pulp 0.22 for SIMD dispatch (runtime CPU detection, auto-vectorization)
+- [Phase 04]: MetricKind uses 7 variants (no composite variant -- composite computed from weighted average of individual scores)
+- [Phase 04]: Sigmoid normalization for LDLJ smoothness (scale=5.0) -- handles arbitrary LDLJ ranges without clipping
+- [Phase 04]: Entropy uses Sturges' rule for histogram bins: ceil(log2(n)) + 1, minimum 2 bins
+- [Phase 04]: Saturation checks against running min/max BEFORE updating them -- new extremes don't count as saturated
 
 ### Pending Todos
 
@@ -94,5 +102,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Completed 03-04-PLAN.md (Prefetch Pipeline Integration) -- Phase 3 fully complete (4/4 plans)
+Stopped at: Completed 04-02-PLAN.md (Quality Metric Accumulators) -- Phase 4 plan 2/4 complete
 Resume file: None

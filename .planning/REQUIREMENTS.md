@@ -49,13 +49,13 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Quality Analysis
 
-- [ ] **QUAL-01**: LDLJ smoothness metric computes log dimensionless jerk producing scores identical to Python Forge
-- [ ] **QUAL-02**: Dead action detection identifies episodes where actions remain constant
-- [ ] **QUAL-03**: Gripper chatter detection identifies rapid gripper open/close oscillation
-- [ ] **QUAL-04**: Static detection identifies episodes with no meaningful state change
-- [ ] **QUAL-05**: Timestamp regularity metric identifies irregular frame timing
-- [ ] **QUAL-06**: Action saturation metric identifies episodes where actions hit limits
-- [ ] **QUAL-07**: Action entropy metric measures action diversity
+- [x] **QUAL-01**: LDLJ smoothness metric computes log dimensionless jerk producing scores identical to Python Forge
+- [x] **QUAL-02**: Dead action detection identifies episodes where actions remain constant
+- [x] **QUAL-03**: Gripper chatter detection identifies rapid gripper open/close oscillation
+- [x] **QUAL-04**: Static detection identifies episodes with no meaningful state change
+- [x] **QUAL-05**: Timestamp regularity metric identifies irregular frame timing
+- [x] **QUAL-06**: Action saturation metric identifies episodes where actions hit limits
+- [x] **QUAL-07**: Action entropy metric measures action diversity
 - [ ] **QUAL-08**: Composite quality score combines all metrics with configurable weights
 - [ ] **QUAL-09**: Quality analysis results exportable as JSON for downstream tools
 - [ ] **QUAL-10**: Episode filtering selects/removes episodes by quality score threshold and individual flags
@@ -167,13 +167,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 | VID-04 | Phase 3 | Complete |
 | VID-05 | Phase 2 | Complete |
 | VID-06 | Phase 2 | Complete |
-| QUAL-01 | Phase 4 | Pending |
-| QUAL-02 | Phase 4 | Pending |
-| QUAL-03 | Phase 4 | Pending |
-| QUAL-04 | Phase 4 | Pending |
-| QUAL-05 | Phase 4 | Pending |
-| QUAL-06 | Phase 4 | Pending |
-| QUAL-07 | Phase 4 | Pending |
+| QUAL-01 | Phase 4 | Complete |
+| QUAL-02 | Phase 4 | Complete |
+| QUAL-03 | Phase 4 | Complete |
+| QUAL-04 | Phase 4 | Complete |
+| QUAL-05 | Phase 4 | Complete |
+| QUAL-06 | Phase 4 | Complete |
+| QUAL-07 | Phase 4 | Complete |
 | QUAL-08 | Phase 4 | Pending |
 | QUAL-09 | Phase 4 | Pending |
 | QUAL-10 | Phase 4 | Pending |
