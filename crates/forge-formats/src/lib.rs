@@ -5,15 +5,15 @@
 //! [`registry`] of supported formats and their capabilities, and a scored
 //! [`detection`] engine for auto-detecting dataset formats.
 //!
-//! Supported formats (8 total):
+//! Supported formats (8 total, 7 writable):
 //! - **lerobot-v3** -- LeRobot v3 (Parquet + MP4 video) \[read + write\]
-//! - **lerobot-v2** -- LeRobot v2 (per-episode Parquet + MP4) \[read\]
+//! - **lerobot-v2** -- LeRobot v2 (per-episode Parquet + MP4) \[read + write\]
 //! - **groot** -- GR00T / NVIDIA Isaac (LeRobot v2 variant) \[read\]
-//! - **hdf5** -- HDF5 (robomimic, ACT/ALOHA) \[read, feature = "hdf5-format"\]
-//! - **zarr** -- Zarr v2 (Diffusion Policy, UMI) \[read, feature = "zarr-format"\]
-//! - **rlds** -- RLDS/TFRecord (Open-X Embodiment) \[read, feature = "rlds-format"\]
-//! - **rosbag** -- ROS bags (ROS 1 .bag + ROS 2 MCAP) \[read, feature = "rosbag-format"\]
-//! - **robodm** -- RoboDM (Berkeley .vla) \[read, feature = "robodm-format"\]
+//! - **hdf5** -- HDF5 (robomimic, ACT/ALOHA) \[read + write, feature = "hdf5-format"\]
+//! - **zarr** -- Zarr v2 (Diffusion Policy, UMI) \[read + write, feature = "zarr-format"\]
+//! - **rlds** -- RLDS/TFRecord (Open-X Embodiment) \[read + write, feature = "rlds-format"\]
+//! - **rosbag** -- ROS bags (ROS 1 .bag read, ROS 2 MCAP read + write) \[read + write, feature = "rosbag-format"\]
+//! - **robodm** -- RoboDM (Berkeley .vla) \[read + write, feature = "robodm-format"\]
 
 pub mod detection;
 pub mod groot;

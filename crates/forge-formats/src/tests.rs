@@ -431,15 +431,22 @@ fn all_formats_can_read_is_true_for_all() {
 }
 
 #[test]
-fn all_formats_can_write_only_for_lerobot_v3() {
+fn all_formats_can_write_for_seven_formats() {
     let formats = crate::all_formats();
-    for fmt in formats {
-        if fmt.name == "lerobot-v3" {
-            assert!(fmt.can_write, "lerobot-v3 should have can_write=true");
-        } else {
-            assert!(!fmt.can_write, "format '{}' should have can_write=false", fmt.name);
-        }
-    }
+    let writable: Vec<&str> = formats.iter().filter(|f| f.can_write).map(|f| f.name).collect();
+    let read_only: Vec<&str> = formats.iter().filter(|f| !f.can_write).map(|f| f.name).collect();
+
+    assert_eq!(writable.len(), 7, "expected 7 writable formats, got {}: {:?}", writable.len(), writable);
+    assert!(writable.contains(&"lerobot-v3"), "lerobot-v3 should be writable");
+    assert!(writable.contains(&"lerobot-v2"), "lerobot-v2 should be writable");
+    assert!(writable.contains(&"hdf5"), "hdf5 should be writable");
+    assert!(writable.contains(&"zarr"), "zarr should be writable");
+    assert!(writable.contains(&"rlds"), "rlds should be writable");
+    assert!(writable.contains(&"rosbag"), "rosbag should be writable");
+    assert!(writable.contains(&"robodm"), "robodm should be writable");
+
+    assert_eq!(read_only.len(), 1, "expected 1 read-only format, got {}: {:?}", read_only.len(), read_only);
+    assert!(read_only.contains(&"groot"), "groot should be read-only");
 }
 
 #[test]

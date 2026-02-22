@@ -11,18 +11,29 @@ use forge_core::{ForgeError, ForgeResult};
 use crate::groot::reader::GR00TReader;
 #[cfg(feature = "hdf5-format")]
 use crate::hdf5::HDF5Reader;
+#[cfg(feature = "hdf5-format")]
+use crate::hdf5::HDF5Writer;
 use crate::lerobot_v2::reader::LeRobotV2Reader;
+use crate::lerobot_v2::LeRobotV2Writer;
 use crate::lerobot_v3::reader::LeRobotV3Reader;
 use crate::lerobot_v3::writer::LeRobotV3Writer;
 #[cfg(feature = "rlds-format")]
 use crate::rlds::RLDSReader;
+#[cfg(feature = "rlds-format")]
+use crate::rlds::RLDSWriter;
 #[cfg(feature = "robodm-format")]
 use crate::robodm::RoboDMReader;
+#[cfg(feature = "robodm-format")]
+use crate::robodm::RoboDMWriter;
 #[cfg(feature = "rosbag-format")]
 use crate::rosbag::RosbagReader;
+#[cfg(feature = "rosbag-format")]
+use crate::rosbag::RosbagWriter;
 use crate::traits::{FormatReader, FormatWriter};
 #[cfg(feature = "zarr-format")]
 use crate::zarr::ZarrReader;
+#[cfg(feature = "zarr-format")]
+use crate::zarr::ZarrWriter;
 
 /// Describes the capabilities of a single dataset format.
 #[derive(Debug, Clone, Copy)]
@@ -54,43 +65,43 @@ pub fn all_formats() -> &'static [FormatCapability] {
         FormatCapability {
             name: "lerobot-v2",
             can_read: true,
-            can_write: false,
+            can_write: true,
             description: "LeRobot v2 (per-episode Parquet + MP4 video)",
         },
         FormatCapability {
             name: "groot",
             can_read: true,
             can_write: false,
-            description: "GR00T / NVIDIA Isaac (LeRobot v2 with NVIDIA markers)",
+            description: "GR00T / NVIDIA Isaac (LeRobot v2 with NVIDIA markers, read-only)",
         },
         FormatCapability {
             name: "hdf5",
             can_read: true,
-            can_write: false,
+            can_write: true,
             description: "HDF5 (robomimic, ACT/ALOHA)",
         },
         FormatCapability {
             name: "zarr",
             can_read: true,
-            can_write: false,
+            can_write: true,
             description: "Zarr v2 (Diffusion Policy, UMI)",
         },
         FormatCapability {
             name: "rlds",
             can_read: true,
-            can_write: false,
+            can_write: true,
             description: "RLDS/TFRecord (Open-X Embodiment)",
         },
         FormatCapability {
             name: "rosbag",
             can_read: true,
-            can_write: false,
-            description: "ROS bags (ROS 1 .bag + ROS 2 MCAP)",
+            can_write: true,
+            description: "ROS bags (ROS 1 .bag read, ROS 2 MCAP read + write)",
         },
         FormatCapability {
             name: "robodm",
             can_read: true,
-            can_write: false,
+            can_write: true,
             description: "RoboDM (Berkeley .vla)",
         },
     ];
@@ -137,6 +148,17 @@ pub fn get_reader(format_name: &str) -> ForgeResult<Box<dyn FormatReader>> {
 pub fn get_writer(format_name: &str) -> ForgeResult<Box<dyn FormatWriter>> {
     match format_name {
         "lerobot-v3" => Ok(Box::new(LeRobotV3Writer::new(30, "unknown"))),
+        "lerobot-v2" => Ok(Box::new(LeRobotV2Writer::new(30, "unknown"))),
+        #[cfg(feature = "rlds-format")]
+        "rlds" => Ok(Box::new(RLDSWriter::new())),
+        #[cfg(feature = "hdf5-format")]
+        "hdf5" => Ok(Box::new(HDF5Writer::new())),
+        #[cfg(feature = "zarr-format")]
+        "zarr" => Ok(Box::new(ZarrWriter::new())),
+        #[cfg(feature = "rosbag-format")]
+        "rosbag" => Ok(Box::new(RosbagWriter::new())),
+        #[cfg(feature = "robodm-format")]
+        "robodm" => Ok(Box::new(RoboDMWriter::new())),
         _ => Err(ForgeError::UnsupportedFormat {
             format_name: format_name.to_string(),
             available: all_formats()
