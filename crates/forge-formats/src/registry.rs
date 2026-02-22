@@ -9,7 +9,8 @@ use std::path::Path;
 use forge_core::{ForgeError, ForgeResult};
 
 use crate::lerobot_v3::reader::LeRobotV3Reader;
-use crate::traits::FormatReader;
+use crate::lerobot_v3::writer::LeRobotV3Writer;
+use crate::traits::{FormatReader, FormatWriter};
 
 /// Describes the capabilities of a single dataset format.
 #[derive(Debug, Clone, Copy)]
@@ -61,6 +62,24 @@ pub fn get_reader(format_name: &str) -> ForgeResult<Box<dyn FormatReader>> {
         _ => Err(ForgeError::UnsupportedFormat {
             format_name: format_name.to_string(),
             available: all_formats().iter().map(|f| f.name.to_string()).collect(),
+        }),
+    }
+}
+
+/// Get a boxed format writer for the given format name.
+///
+/// Returns a writer with sensible defaults (30 fps, "unknown" robot type).
+/// Callers should configure the writer further via the conversion config.
+pub fn get_writer(format_name: &str) -> ForgeResult<Box<dyn FormatWriter>> {
+    match format_name {
+        "lerobot-v3" => Ok(Box::new(LeRobotV3Writer::new(30, "unknown"))),
+        _ => Err(ForgeError::UnsupportedFormat {
+            format_name: format_name.to_string(),
+            available: all_formats()
+                .iter()
+                .filter(|f| f.can_write)
+                .map(|f| f.name.to_string())
+                .collect(),
         }),
     }
 }

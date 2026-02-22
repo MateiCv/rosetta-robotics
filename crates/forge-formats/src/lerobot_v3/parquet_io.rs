@@ -1,17 +1,20 @@
 //! Parquet I/O helpers for LeRobot v3 datasets.
 //!
-//! Reads Parquet data files and episode metadata into Arrow RecordBatches,
-//! and extracts per-episode data with proper type handling for
-//! FixedSizeList, Int64, and Float32 columns.
+//! Reads and writes Parquet data files and episode metadata using Arrow
+//! RecordBatches, with proper type handling for FixedSizeList, Int64,
+//! and Float32 columns.
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use arrow::array::{
     Array, AsArray, Float32Array, Int64Array, RecordBatch,
 };
-use arrow::datatypes::DataType;
+use arrow::datatypes::{DataType, Field, Schema};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::arrow::ArrowWriter;
+use parquet::file::properties::WriterProperties;
 
 use forge_core::{ForgeError, ForgeResult};
 
@@ -259,4 +262,71 @@ fn get_f32_column<'a>(batch: &'a RecordBatch, name: &str) -> ForgeResult<&'a Flo
             expected: "Float32".to_string(),
             actual: format!("{:?}", batch.column(col_idx).data_type()),
         })
+}
+
+// ---- Write helpers ----
+
+/// Write an Arrow RecordBatch to a Parquet file, creating parent directories.
+pub fn write_parquet_file(path: &Path, batch: &RecordBatch) -> ForgeResult<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(ForgeError::Io)?;
+    }
+
+    let file = std::fs::File::create(path).map_err(ForgeError::Io)?;
+    let props = WriterProperties::builder().build();
+    let mut writer =
+        ArrowWriter::try_new(file, batch.schema(), Some(props)).map_err(|e| {
+            ForgeError::Inspection {
+                path: path.to_path_buf(),
+                reason: format!("failed to create Parquet writer: {e}"),
+            }
+        })?;
+
+    writer.write(batch).map_err(|e| ForgeError::Inspection {
+        path: path.to_path_buf(),
+        reason: format!("failed to write Parquet batch: {e}"),
+    })?;
+
+    writer.close().map_err(|e| ForgeError::Inspection {
+        path: path.to_path_buf(),
+        reason: format!("failed to close Parquet writer: {e}"),
+    })?;
+
+    Ok(())
+}
+
+/// Build the Arrow Schema for data Parquet files with FixedSizeList types.
+pub fn build_data_schema(action_dim: i32, state_dim: i32) -> Schema {
+    Schema::new(vec![
+        Field::new("episode_index", DataType::Int64, false),
+        Field::new("frame_index", DataType::Int64, false),
+        Field::new("index", DataType::Int64, false),
+        Field::new("timestamp", DataType::Float32, false),
+        Field::new("task_index", DataType::Int64, false),
+        Field::new(
+            "action",
+            DataType::FixedSizeList(
+                Arc::new(Field::new("item", DataType::Float32, true)),
+                action_dim,
+            ),
+            false,
+        ),
+        Field::new(
+            "observation.state",
+            DataType::FixedSizeList(
+                Arc::new(Field::new("item", DataType::Float32, true)),
+                state_dim,
+            ),
+            false,
+        ),
+    ])
+}
+
+/// Build the Arrow Schema for episode metadata Parquet files.
+pub fn build_episode_metadata_schema() -> Schema {
+    Schema::new(vec![
+        Field::new("episode_index", DataType::Int64, false),
+        Field::new("length", DataType::Int64, false),
+        Field::new("task_index", DataType::Int64, false),
+    ])
 }

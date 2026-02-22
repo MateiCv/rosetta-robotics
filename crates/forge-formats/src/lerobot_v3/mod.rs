@@ -7,3 +7,4 @@
 pub mod info;
 pub mod parquet_io;
 pub mod reader;
+pub mod writer;
