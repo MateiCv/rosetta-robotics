@@ -159,7 +159,11 @@ impl FormatReader for LeRobotV3Reader {
     }
 }
 
-/// Read all data Parquet files across all chunks.
+/// Read all data Parquet files across all chunks and file indices.
+///
+/// Iterates chunks based on total_episodes, and within each chunk scans
+/// file indices from 0 upward until the file is not found. This supports
+/// both single-file-per-chunk (standard) and one-file-per-episode layouts.
 fn read_all_data_batches(path: &Path, info: &InfoJson) -> ForgeResult<Vec<RecordBatch>> {
     let mut all_batches = Vec::new();
 
@@ -170,15 +174,18 @@ fn read_all_data_batches(path: &Path, info: &InfoJson) -> ForgeResult<Vec<Record
     };
 
     for chunk_idx in 0..num_chunks {
-        let data_path_rel = info.resolve_data_path(chunk_idx, 0);
-        let data_path = path.join(&data_path_rel);
+        // Scan file indices within the chunk until none are found.
+        for file_idx in 0.. {
+            let data_path_rel = info.resolve_data_path(chunk_idx, file_idx);
+            let data_path = path.join(&data_path_rel);
 
-        if !data_path.exists() {
-            continue;
+            if !data_path.exists() {
+                break;
+            }
+
+            let batches = parquet_io::read_parquet_file(&data_path)?;
+            all_batches.extend(batches);
         }
-
-        let batches = parquet_io::read_parquet_file(&data_path)?;
-        all_batches.extend(batches);
     }
 
     Ok(all_batches)

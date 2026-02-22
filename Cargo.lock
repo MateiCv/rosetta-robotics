@@ -670,6 +670,7 @@ dependencies = [
  "clap",
  "forge-core",
  "forge-formats",
+ "forge-pipeline",
 ]
 
 [[package]]
@@ -701,7 +702,14 @@ dependencies = [
 name = "forge-pipeline"
 version = "0.1.0"
 dependencies = [
+ "arrow",
+ "bytes",
  "forge-core",
+ "forge-formats",
+ "forge-video",
+ "parquet",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

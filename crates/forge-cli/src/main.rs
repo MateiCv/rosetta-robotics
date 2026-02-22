@@ -1,9 +1,16 @@
 //! Forge CLI -- high-performance robotics dataset format converter.
 //!
-//! Phase 1 provides only the `version` subcommand. Additional subcommands
-//! (inspect, convert, quality, filter, hub, etc.) arrive in later phases.
+//! Subcommands:
+//! - `version` -- Show version and build info
+//! - `formats` -- List all supported dataset formats
+//! - `convert` -- Convert a dataset from one format to another
+
+use std::path::Path;
 
 use clap::{Parser, Subcommand};
+
+use forge_core::ConversionConfig;
+use forge_pipeline::Converter;
 
 #[derive(Parser)]
 #[command(
@@ -23,6 +30,16 @@ enum Commands {
     Version,
     /// List all supported dataset formats
     Formats,
+    /// Convert a dataset from one format to another
+    Convert {
+        /// Source dataset path
+        source: String,
+        /// Output dataset path
+        output: String,
+        /// Target format
+        #[arg(long, default_value = "lerobot-v3")]
+        target_format: String,
+    },
 }
 
 fn main() {
@@ -31,6 +48,11 @@ fn main() {
     match cli.command {
         Commands::Version => print_version(),
         Commands::Formats => print_formats(),
+        Commands::Convert {
+            source,
+            output,
+            target_format,
+        } => run_convert(&source, &output, &target_format),
     }
 }
 
@@ -84,5 +106,36 @@ fn print_formats() {
             "{:<20} {:<8} {:<8} {}",
             fmt.name, read, write, fmt.description
         );
+    }
+}
+
+fn run_convert(source: &str, output: &str, target_format: &str) {
+    let config = ConversionConfig {
+        target_format: Some(target_format.to_string()),
+        ..ConversionConfig::default()
+    };
+
+    let converter = Converter::new(config);
+
+    println!("Converting: {} -> {}", source, output);
+    println!("Target format: {}", target_format);
+
+    match converter.convert(Path::new(source), Path::new(output)) {
+        Ok(result) => {
+            println!("\nConversion complete:");
+            println!("  Episodes converted: {}", result.episodes_converted);
+            println!("  Episodes failed:    {}", result.episodes_failed);
+            println!("  Total frames:       {}", result.total_frames);
+            if !result.errors.is_empty() {
+                println!("\nErrors:");
+                for err in &result.errors {
+                    println!("  - {err}");
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
     }
 }

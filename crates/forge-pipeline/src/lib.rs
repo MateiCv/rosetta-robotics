@@ -1,8 +1,13 @@
-//! Parallel conversion pipeline.
+//! Conversion pipeline orchestrating format readers and writers.
 //!
-//! Orchestrates format readers and writers with rayon-based parallelism,
-//! error continuation, and progress reporting. Coordinates the read-transform-
-//! write flow using the canonical [`forge_core::Episode`] type as the
-//! intermediate representation.
+//! The pipeline reads episodes from a source dataset format, applies
+//! field and camera remapping, and writes to a target format. The
+//! [`Converter`] type coordinates the full read-transform-write flow
+//! using the canonical [`forge_core::Episode`] as the intermediate
+//! representation.
 //!
-//! Implementation arrives in Phase 3.
+//! Parallel processing via rayon will be added in Phase 3.
+
+pub mod convert;
+
+pub use convert::{ConversionResult, Converter};
