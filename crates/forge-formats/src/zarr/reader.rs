@@ -10,7 +10,7 @@
 //! - Generic: any Zarr v2 store with `episode_ends` array for boundaries
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -264,10 +264,10 @@ fn has_zarr_markers_recursive(path: &Path) -> bool {
     };
     for entry in entries.flatten() {
         let p = entry.path();
-        if p.is_dir() {
-            if p.join(".zarray").exists() || p.join(".zgroup").exists() {
-                return true;
-            }
+        if p.is_dir()
+            && (p.join(".zarray").exists() || p.join(".zgroup").exists())
+        {
+            return true;
         }
     }
     false
@@ -551,12 +551,12 @@ fn discover_arrays(
 /// Recursively discover arrays in a directory.
 fn discover_arrays_recursive(
     store: &Arc<FilesystemStore>,
-    root_path: &Path,
+    _root_path: &Path,
     dir: &Path,
     prefix: &str,
     infos: &mut Vec<ZarrArrayInfo>,
 ) -> ForgeResult<()> {
-    let entries = std::fs::read_dir(dir).map_err(|e| ForgeError::Io(e))?;
+    let entries = std::fs::read_dir(dir).map_err(ForgeError::Io)?;
 
     for entry in entries.flatten() {
         let entry_path = entry.path();
@@ -603,7 +603,7 @@ fn discover_arrays_recursive(
                 // Recurse into subdirectories (e.g., data/images/top/).
                 let sub_prefix = format!("{prefix}/{entry_name}");
                 discover_arrays_recursive(
-                    store, root_path, &entry_path, &sub_prefix, infos,
+                    store, _root_path, &entry_path, &sub_prefix, infos,
                 )?;
             }
         }
@@ -664,6 +664,7 @@ pub(crate) fn compute_boundaries(episode_ends: &[usize]) -> Vec<(usize, usize)> 
 /// Checks for JPEG (0xFF 0xD8 0xFF) and PNG (0x89 0x50 0x4E 0x47) magic bytes.
 /// For 3D uint8 arrays (H, W, C), returns `ImageEncoding::Raw`.
 /// For 1D byte blobs, checks magic bytes then falls back to `CompressedBytes`.
+#[cfg(test)]
 pub(crate) fn detect_image_encoding_from_bytes(data: &[u8], is_raw_pixels: bool) -> ImageEncoding {
     if is_raw_pixels {
         return ImageEncoding::Raw;
@@ -716,7 +717,7 @@ fn build_episode(
     start: usize,
     end: usize,
     array_infos: &[ZarrArrayInfo],
-    dataset_path: &PathBuf,
+    dataset_path: &Path,
 ) -> ForgeResult<Episode> {
     let mut episode = Episode::new(ep_idx.to_string());
     let num_frames = end - start;
@@ -780,12 +781,12 @@ fn build_episode(
 fn create_lazy_array(
     info: &ZarrArrayInfo,
     global_idx: usize,
-    dataset_path: &PathBuf,
+    dataset_path: &Path,
 ) -> LazyArray {
     let store_path = info.store_path.clone();
     let shape = info.per_frame_shape();
     let dtype = info.forge_dtype();
-    let ds_path = dataset_path.clone();
+    let ds_path = dataset_path.to_path_buf();
 
     LazyArray::new(
         move || load_frame_array(&ds_path, &store_path, global_idx),
@@ -854,10 +855,10 @@ fn load_frame_array(
 fn create_lazy_image(
     info: &ZarrArrayInfo,
     global_idx: usize,
-    dataset_path: &PathBuf,
+    dataset_path: &Path,
 ) -> LazyImage {
     let store_path = info.store_path.clone();
-    let ds_path = dataset_path.clone();
+    let ds_path = dataset_path.to_path_buf();
     let shape = info.shape.clone();
 
     let (height, width, channels, encoding) = if shape.len() == 4 {

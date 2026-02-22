@@ -164,7 +164,9 @@ fn parse_ros1_compressed_image(data: &[u8]) -> Option<(String, Vec<u8>)> {
 /// Parse a ROS 1 serialized `sensor_msgs/JointState` message.
 ///
 /// Layout: header + name(string[]) + position(f64[]) + velocity(f64[]) + effort(f64[])
-fn parse_ros1_joint_state(data: &[u8]) -> Option<(Vec<String>, Vec<f64>, Vec<f64>, Vec<f64>)> {
+type JointStateResult = (Vec<String>, Vec<f64>, Vec<f64>, Vec<f64>);
+
+fn parse_ros1_joint_state(data: &[u8]) -> Option<JointStateResult> {
     let mut pos = 0;
 
     // Skip header
@@ -586,7 +588,7 @@ fn store_opaque_metadata(frame: &mut Frame, key: &str, data: &[u8]) {
 /// Simple base64 encoding without pulling in a dependency.
 pub(crate) fn base64_encode(data: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
 
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as u32;

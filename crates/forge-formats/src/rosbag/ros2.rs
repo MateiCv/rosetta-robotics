@@ -551,7 +551,9 @@ fn parse_cdr_compressed_image(data: &[u8]) -> Option<(String, Vec<u8>)> {
 ///
 /// Fields: header -> name(sequence<string>) -> position(sequence<float64>)
 ///         -> velocity(sequence<float64>) -> effort(sequence<float64>)
-fn parse_cdr_joint_state(data: &[u8]) -> Option<(Vec<String>, Vec<f64>, Vec<f64>, Vec<f64>)> {
+type JointStateResult = (Vec<String>, Vec<f64>, Vec<f64>, Vec<f64>);
+
+fn parse_cdr_joint_state(data: &[u8]) -> Option<JointStateResult> {
     let mut reader = CdrReader::new(data)?;
     reader.skip_header()?;
 

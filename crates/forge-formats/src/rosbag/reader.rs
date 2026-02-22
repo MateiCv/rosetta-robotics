@@ -103,7 +103,7 @@ fn has_rosbag_magic(path: &Path) -> bool {
     let mut buf = [0u8; 13]; // "#ROSBAG V2.0\n"
     use std::io::Read;
     if file.read_exact(&mut buf).is_ok() {
-        &buf == ROSBAG_MAGIC
+        buf == *ROSBAG_MAGIC
     } else {
         false
     }

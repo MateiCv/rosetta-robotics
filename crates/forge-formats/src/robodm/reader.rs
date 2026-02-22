@@ -426,7 +426,7 @@ impl FormatReader for RoboDMReader {
             return has_vla_extension(path);
         }
         if path.is_dir() {
-            return find_vla_files(path).map_or(false, |files| !files.is_empty());
+            return find_vla_files(path).is_ok_and(|files| !files.is_empty());
         }
         false
     }
