@@ -9,4 +9,11 @@ repository.workspace = true
 
 [dependencies]
 forge-core.workspace = true
+forge-video.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+arrow.workspace = true
+parquet.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

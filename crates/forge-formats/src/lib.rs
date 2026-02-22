@@ -10,6 +10,7 @@
 //! Additional formats (RLDS, HDF5, Zarr, ROS bags, etc.) will be added in
 //! Phase 5-6.
 
+pub mod lerobot_v3;
 pub mod registry;
 pub mod traits;
 

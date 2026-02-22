@@ -24,6 +24,9 @@ serde_yaml_ng = "0.9"
 bytes = "1"
 clap = { version = "4.5", features = ["derive"] }
 ffmpeg-next = "8"
+arrow = { version = "54", features = ["prettyprint"] }
+parquet = { version = "54", features = ["arrow"] }
+tempfile = "3"
 forge-core = { path = "crates/forge-core" }
 forge-formats = { path = "crates/forge-formats" }
 forge-video = { path = "crates/forge-video" }
