@@ -11,5 +11,7 @@
 //! elements preserved as opaque metadata.
 
 pub mod reader;
+pub mod writer;
 
 pub use reader::{RoboDMDetector, RoboDMReader};
+pub use writer::RoboDMWriter;
