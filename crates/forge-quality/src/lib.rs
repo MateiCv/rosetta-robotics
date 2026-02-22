@@ -1,7 +1,24 @@
-//! Quality analysis metrics and episode filtering.
+//! Quality analysis metrics and episode filtering for robotics datasets.
 //!
-//! Provides streaming, single-pass quality metrics (LDLJ smoothness,
-//! dead actions, gripper chatter, static detection, timestamp regularity,
-//! action saturation, entropy) and episode filtering by quality scores.
+//! This crate provides streaming, single-pass quality metrics for robotics
+//! episodes (LDLJ smoothness, dead actions, gripper chatter, static detection,
+//! timestamp regularity, action saturation, entropy) and episode filtering
+//! by quality scores.
 //!
-//! Implementation arrives in Phase 4.
+//! # Architecture
+//!
+//! - **[`config`]**: Quality and filter configuration with YAML loading.
+//! - **[`models`]**: Serializable report and result types for JSON export.
+//! - **[`metrics`]**: Streaming [`MetricAccumulator`](metrics::MetricAccumulator) trait
+//!   and [`MetricKind`](metrics::MetricKind) enum.
+//! - **[`simd`]**: SIMD-accelerated kernel functions (jerk, histogram, entropy, dot product).
+
+pub mod config;
+pub mod metrics;
+pub mod models;
+pub mod simd;
+
+// Re-export key types for convenience.
+pub use config::{FilterConfig, QualityConfig};
+pub use metrics::{MetricKind, MetricResult};
+pub use models::{EpisodeQuality, FilterResult, MetricScore, QualityReport};
