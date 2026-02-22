@@ -4,6 +4,19 @@
 
 A complete Rust rewrite of Forge — the normalization layer for robotics datasets. Forge converts between RLDS, LeRobot v2/v3, HDF5, Zarr, RoboDM, and ROS bag formats with bidirectional support. The Rust rewrite delivers zero-copy pipelines, true thread parallelism via rayon, SIMD-accelerated quality analysis, and native Arrow Parquet I/O — targeting 5-15x performance over the Python implementation while maintaining full feature parity.
 
+## Current Milestone: v2.0 Format Breadth & Distribution
+
+**Goal:** Support all 8 input formats, 7 output formats, full CLI with all subcommands, HuggingFace Hub integration, visualization, and cross-platform binary releases.
+
+**Target features:**
+- 8 format readers: RLDS, LeRobot v2, HDF5, Zarr, ROS bags, RoboDM, GR00T + auto-detection
+- 6 format writers: RLDS, HDF5, Zarr, ROS bags, LeRobot v2, RoboDM + round-trip tests
+- Full CLI: inspect, convert, quality, filter, hub download/upload, stats, export-video, visualize
+- YAML config with field mapping, camera remapping, FPS override
+- HuggingFace Hub download/upload with auth and caching
+- Interactive terminal dataset viewer
+- Cross-platform binary releases (Linux, macOS, Windows)
+
 ## Core Value
 
 Convert any robotics dataset format to any other format as fast as the hardware allows, without losing data fidelity.
@@ -105,4 +118,4 @@ Convert any robotics dataset format to any other format as fast as the hardware 
 | Bidirectional all formats | Full ecosystem coverage, not just LeRobot-centric | — Pending (Phase 5-6) |
 
 ---
-*Last updated: 2026-02-22 after v1.0 milestone*
+*Last updated: 2026-02-21 after v2.0 milestone start*
