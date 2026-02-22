@@ -75,6 +75,10 @@ Key decisions carried forward to PROJECT.md Key Decisions table.
 - [06-01] Metadata features from frame.metadata round-tripped back through TFRecord features
 - [06-01] LeRobot v2 writer reuses lerobot_v3::parquet_io for schema building and parquet writing
 - [06-01] JSON keys always sorted for deterministic output (not conditional on deterministic flag)
+- [06-02] ndarray pinned to 0.15 (not 0.16) to match hdf5 crate 0.8's transitive dependency
+- [06-02] Zarr v2 metadata via ArrayMetadataV2 + Array::new_with_metadata() since ArrayBuilder only produces v3
+- [06-02] Zarr writer buffers all data in memory and writes in finalize() because array shapes must be known upfront
+- [06-02] HDF5 ALOHA layout as default (file-per-episode) with robomimic as opt-in via with_layout()
 - [06-03] Flat EBML structure (no master nesting) for round-trip compatibility with reader's flat parser
 - [06-03] CdrWriter placed in writer.rs (not ros2.rs) to keep reader module clean
 - [06-03] Float64MultiArray used for action data as most general ROS 2 numeric array type
@@ -99,6 +103,6 @@ Key items:
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Completed 06-03-PLAN.md (ROS bag + RoboDM writers)
+Stopped at: Completed 06-02-PLAN.md (HDF5 + Zarr writers)
 Next: 06-04-PLAN.md (Format Registry Integration)
 Resume file: .planning/ROADMAP.md
