@@ -10,6 +10,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::QualityConfig;
 
+pub mod chatter;
+pub mod dead_actions;
+pub mod smoothness;
+pub mod static_det;
+
 /// Identifies a specific quality metric.
 ///
 /// Each variant corresponds to one dimension of robotics episode quality.
