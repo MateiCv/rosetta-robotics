@@ -34,6 +34,7 @@ Last activity: 2026-02-22 — Completed 05-07 (RoboDM Format Reader)
 | 05 | 07 - RoboDM Format Reader | 4min | 1 | 3 |
 | 05 | 06 - ROS Bag Format Reader | 10min | 2 | 7 |
 | 05 | 02 - LeRobot v2 & GR00T Readers | 11min | 2 | 8 |
+| 05 | 03 - HDF5 Format Reader | 10min | 2 | 6 |
 
 ## Accumulated Context
 
@@ -62,6 +63,8 @@ Key decisions carried forward to PROJECT.md Key Decisions table.
 - [05-02] V2InfoJson uses serde flatten to preserve unknown fields in dataset metadata for data fidelity
 - [05-02] GR00T reader delegates all reading to LeRobotV2Reader, only overriding format name and NVIDIA metadata
 - [05-02] NVIDIA robot_type detection is case-insensitive substring match against known identifiers
+- [05-03] Use hdf5 crate 0.8.1 with HDF5 1.10 system library (not HDF5 2.0) for compatibility
+- [05-03] Simplified read_dataset_as_f64() to use hdf5 crate built-in type conversion instead of manual type matching
 
 ### Pending Todos
 
@@ -82,5 +85,5 @@ Key items:
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Completed 05-02-PLAN.md (LeRobot v2 & GR00T Readers)
-Resume file: .planning/phases/05-remaining-format-readers/05-02-SUMMARY.md
+Stopped at: Completed 05-03-PLAN.md (HDF5 Format Reader)
+Resume file: .planning/phases/05-remaining-format-readers/05-03-SUMMARY.md
