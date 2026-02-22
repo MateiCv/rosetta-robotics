@@ -46,12 +46,14 @@ See: `.planning/milestones/v2.0-ROADMAP.md` for full details.
   3. `forge hub download <repo>` downloads datasets from HuggingFace Hub with authentication for gated repos, and re-downloads are skipped via local cache
   4. Format auto-detection works seamlessly across all CLI subcommands without user-specified format hints
   5. Shell completions are generated for bash, zsh, and fish
-**Plans**: TBD
+**Plans**: 5 plans
 
 Plans:
-- [ ] 07-01: TBD
-- [ ] 07-02: TBD
-- [ ] 07-03: TBD
+- [ ] 07-01-PLAN.md — CLI refactoring, modular command structure, YAML config loading, field remapping
+- [ ] 07-02-PLAN.md — Inspect subcommand (text/JSON/generate-config) and convert enhancement
+- [ ] 07-03-PLAN.md — Quality analysis, episode filtering, and dataset statistics subcommands
+- [ ] 07-04-PLAN.md — HuggingFace Hub download with auth/caching and upload stub
+- [ ] 07-05-PLAN.md — Video export, visualize placeholder, and shell completions
 
 ### Phase 8: Hub Upload, Visualization, and Distribution
 **Goal**: Users can push datasets to HuggingFace Hub, explore datasets interactively in the terminal, and install Forge as a single binary on any major platform
@@ -81,5 +83,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 | 4. Quality Analysis and Filtering | v1.0 | 4/4 | Complete | 2026-02-22 |
 | 5. Remaining Format Readers | v2.0 | 8/8 | Complete | 2026-02-22 |
 | 6. Remaining Format Writers | v2.0 | 4/4 | Complete | 2026-02-22 |
-| 7. CLI, Configuration, and Hub Download | Next | 0/? | Not started | - |
+| 7. CLI, Configuration, and Hub Download | Next | 0/5 | Planned | - |
 | 8. Hub Upload, Visualization, and Distribution | Next | 0/? | Not started | - |
