@@ -5,5 +5,7 @@
 //! transparent Zarr v2 reading and decompression.
 
 pub mod reader;
+pub mod writer;
 
 pub use reader::{ZarrDetector, ZarrReader};
+pub use writer::ZarrWriter;
