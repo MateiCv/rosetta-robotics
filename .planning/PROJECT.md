@@ -2,20 +2,7 @@
 
 ## What This Is
 
-A complete Rust rewrite of Forge — the normalization layer for robotics datasets. Forge converts between RLDS, LeRobot v2/v3, HDF5, Zarr, RoboDM, and ROS bag formats with bidirectional support. The Rust rewrite delivers zero-copy pipelines, true thread parallelism via rayon, SIMD-accelerated quality analysis, and native Arrow Parquet I/O — targeting 5-15x performance over the Python implementation while maintaining full feature parity.
-
-## Current Milestone: v2.0 Format Breadth & Distribution
-
-**Goal:** Support all 8 input formats, 7 output formats, full CLI with all subcommands, HuggingFace Hub integration, visualization, and cross-platform binary releases.
-
-**Target features:**
-- 8 format readers: RLDS, LeRobot v2, HDF5, Zarr, ROS bags, RoboDM, GR00T + auto-detection
-- 6 format writers: RLDS, HDF5, Zarr, ROS bags, LeRobot v2, RoboDM + round-trip tests
-- Full CLI: inspect, convert, quality, filter, hub download/upload, stats, export-video, visualize
-- YAML config with field mapping, camera remapping, FPS override
-- HuggingFace Hub download/upload with auth and caching
-- Interactive terminal dataset viewer
-- Cross-platform binary releases (Linux, macOS, Windows)
+A complete Rust rewrite of Forge — the normalization layer for robotics datasets. Forge reads and writes 8 robotics dataset formats (RLDS, LeRobot v2/v3, HDF5, Zarr, RoboDM, GR00T, ROS bags) with bidirectional conversion, scored auto-detection, zero-copy pipelines, true thread parallelism via rayon, SIMD-accelerated quality analysis, and native Arrow Parquet I/O — delivering 5-15x performance over the Python implementation.
 
 ## Core Value
 
@@ -47,6 +34,12 @@ Convert any robotics dataset format to any other format as fast as the hardware 
 - ✓ Format registry with auto-detection — v1.0
 - ✓ Camera name remapping during conversion — v1.0
 
+<!-- v2.0 Format Breadth (shipped 2026-02-22) -->
+- ✓ 8 format readers: RLDS, LeRobot v2, HDF5, Zarr, ROS bag, RoboDM, GR00T — v2.0
+- ✓ Scored format auto-detection from filesystem structure for all 8 formats — v2.0
+- ✓ 6 format writers: RLDS, HDF5, Zarr, ROS bag (MCAP), LeRobot v2, RoboDM — v2.0
+- ✓ Bidirectional round-trip tests for all writable formats — v2.0
+
 <!-- Python-validated capabilities (from existing implementation) -->
 - ✓ Format detection from filesystem structure — existing
 - ✓ Dataset inspection with schema analysis — existing
@@ -63,20 +56,16 @@ Convert any robotics dataset format to any other format as fast as the hardware 
 
 ### Active
 
-<!-- Remaining capabilities for v2.0+ milestones -->
+<!-- Remaining capabilities for next milestone -->
 
-- [ ] Bidirectional conversion for ALL formats (RLDS, LeRobot v2, HDF5, Zarr, RoboDM, ROS bag, GR00T)
-- [ ] Format auto-detection for all 8 input formats
 - [ ] Full CLI: inspect, convert, quality, filter, hub download/upload, stats, export-video, visualize
 - [ ] YAML-based conversion config with field mapping, camera remapping, FPS override
-- [ ] HuggingFace Hub upload support (push datasets with LFS)
 - [ ] HuggingFace Hub download with authentication and caching
+- [ ] HuggingFace Hub upload support (push datasets with LFS)
 - [ ] Full interactive dataset viewer (terminal-based)
-- [ ] ROS bag writing support
 - [ ] Cross-platform binary releases (Linux, macOS, Windows)
 - [ ] Shell completions for bash, zsh, fish
 - [ ] Field remapping during cross-format conversion
-- [ ] Comprehensive test suite with format round-trip tests across all formats
 
 ### Out of Scope
 
@@ -87,11 +76,11 @@ Convert any robotics dataset format to any other format as fast as the hardware 
 
 ## Context
 
-**Current state (v1.0 shipped):** 9,974 lines of Rust across 6 crates (forge-core, forge-video, forge-formats, forge-quality, forge-pipeline, forge-cli). 134 passing tests. Full LeRobot v3 read/write pipeline with parallel conversion, quality analysis, and episode filtering at the library level. CLI supports `forge version`, `forge formats`, and `forge convert`.
+**Current state (v2.0 shipped):** 24,628 lines of Rust across 6 crates (forge-core, forge-video, forge-formats, forge-quality, forge-pipeline, forge-cli). 366 passing tests. 8 format readers with scored auto-detection, 7 format writers (including LeRobot v3), parallel conversion pipeline with quality analysis and episode filtering. CLI supports `forge version`, `forge formats`, and `forge convert`.
 
-**Tech stack:** Rust — clap (CLI), rayon (parallelism), arrow-rs v54 + parquet v54 (Parquet I/O), ffmpeg-next v8 (video), pulp 0.22 (SIMD), serde/serde_yaml_ng (config), indicatif (progress), crossbeam-channel (prefetch), bytes (zero-copy).
+**Tech stack:** Rust — clap (CLI), rayon (parallelism), arrow-rs v54 + parquet v54 (Parquet I/O), ffmpeg-next v8 (video), pulp 0.22 (SIMD), serde/serde_yaml_ng (config), indicatif (progress), crossbeam-channel (prefetch), bytes (zero-copy), hdf5 0.8 (HDF5), zarrs 0.22 (Zarr), tfrecord (TFRecord), mcap (ROS 2 MCAP).
 
-**Remaining work:** Phases 5-8 cover 8 additional format readers (RLDS, LeRobot v2, HDF5, Zarr, ROS bag, RoboDM, GR00T), 6 format writers, full CLI with all subcommands, Hub integration, visualization, and cross-platform releases. 34 additional requirements.
+**Remaining work:** Phases 7-8 cover full CLI with all subcommands, YAML config, Hub download/upload, visualization, and cross-platform releases. 20 requirements.
 
 **Robotics ecosystem context:** Forge serves the robotics ML community converting between Google's RLDS (Open-X Embodiment), HuggingFace's LeRobot, Stanford's HDF5 (robomimic/ACT), Columbia's Zarr (Diffusion Policy), Berkeley's RoboDM, and ROS bags. The primary conversion target is LeRobot v3 (Parquet + MP4).
 
@@ -115,7 +104,13 @@ Convert any robotics dataset format to any other format as fast as the hardware 
 | bytes for zero-copy | Arc-backed byte sharing, single ownership transfer | ✓ Good — DecodedFrame.data passes through pipeline with no copies |
 | Composite 0-1 (not 0-10) | Consistent with individual metric normalization range | ✓ Good — avoids confusion with Python's 0-10 scale |
 | Entropy buffers O(T*D) | Histogram needs all values; 1.6MB max per episode acceptable | ✓ Good — other 6 metrics O(1), entropy is the documented exception |
-| Bidirectional all formats | Full ecosystem coverage, not just LeRobot-centric | — Pending (Phase 5-6) |
+| Manual TFRecord parser | Avoid prost 0.12/0.13 version conflict | ✓ Good — uses tfrecord crate Record::from_bytes() |
+| Manual CDR deserialization | Avoid rosbags-rs dependency for known ROS 2 types | ✓ Good — simpler, zero additional deps |
+| Manual EBML VINT parsing | RoboDM schema undocumented, no crate works | ✓ Good — heuristic element classification for best-effort reading |
+| Scored detection engine | Confidence-ranked format identification | ✓ Good — all 8 formats detected from filesystem structure alone |
+| GR00T read-only | NVIDIA datasets use LeRobot v2 format underneath | ✓ Good — write to lerobot-v2 for NVIDIA-compatible output |
+| HDF5 behind feature flag | Requires system libHDF5 installation | ✓ Good — optional dependency, documented in Cargo.toml |
+| zarrs 0.22 (not 0.23) | 0.23 requires Rust 1.91, MSRV is 1.85 | ✓ Good — pinned for compatibility |
 
 ---
-*Last updated: 2026-02-21 after v2.0 milestone start*
+*Last updated: 2026-02-22 after v2.0 milestone*

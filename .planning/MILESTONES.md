@@ -23,3 +23,31 @@
 
 ---
 
+
+## v2.0 Format Breadth (Shipped: 2026-02-22)
+
+**Phases completed:** 2 phases, 12 plans
+**Lines of Rust:** 24,628 (+14,654 from v1.0)
+**Tests:** 366 passing
+**Requirements:** 14/14 satisfied (READ-01..09, WRIT-02..07)
+**Timeline:** 2 days (2026-02-21 → 2026-02-22)
+
+**Key accomplishments:**
+- 8 format readers (RLDS/TFRecord, LeRobot v2, HDF5, Zarr, ROS bag, RoboDM, GR00T) with scored auto-detection engine
+- 6 format writers (RLDS, HDF5, Zarr, ROS bag/MCAP, LeRobot v2, RoboDM) for full bidirectional conversion
+- Scored format auto-detection: confidence-ranked identification from filesystem structure alone, no user hints needed
+- Round-trip integration tests verified for all 7 writable formats (GR00T read-only)
+- Zero external Python dependencies: manual TFRecord, CDR, EBML parsers instead of Python ecosystem crates
+
+**Tech debt carried forward (7 items):**
+- Python interop validation deferred (tensorflow_datasets, h5py, zarr, ROS 2 tools)
+- stats.json empty placeholder in LeRobot v2/v3 writers
+- RoboDM small image heuristic misclassification
+- zarrs pinned to 0.22 for MSRV compatibility
+- HDF5 requires system libHDF5 (excluded from default features)
+- See `.planning/milestones/v2.0-MILESTONE-AUDIT.md` for full list
+
+**Scope note:** CLI, Hub integration, visualization, and distribution (Phases 7-8, 20 requirements) deferred to next milestone.
+
+---
+
