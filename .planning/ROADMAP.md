@@ -66,12 +66,13 @@ Plans:
   3. Running the same conversion twice with deterministic mode produces bit-for-bit identical output
   4. Progress bars display episode count, ETA, throughput (episodes/sec), and memory usage during long conversions
   5. Video frames flow through the read-transform-encode chain without intermediate buffer copies (zero-copy pipeline)
-**Plans:** 3 plans
+**Plans:** 4 plans
 
 Plans:
-- [ ] 03-01-PLAN.md -- Zero-copy video frames (Bytes), new dependencies, ConversionConfig extensions, EpisodeFailure type
-- [ ] 03-02-PLAN.md -- Parallel rayon Converter with ErrorCollector, deterministic mode, memory throttling
-- [ ] 03-03-PLAN.md -- Progress reporting with memory tracking, prefetch pipeline, CLI flags, marker files
+- [x] 03-01-PLAN.md -- Zero-copy video frames (Bytes), new dependencies, ConversionConfig extensions, EpisodeFailure type
+- [x] 03-02-PLAN.md -- Parallel rayon Converter with ErrorCollector, deterministic mode, memory throttling
+- [x] 03-03-PLAN.md -- Progress reporting with memory tracking, prefetch pipeline, CLI flags, marker files
+- [ ] 03-04-PLAN.md -- Wire prefetch module into Converter write phase (gap closure: VID-04)
 
 ### Phase 4: Quality Analysis and Filtering
 **Goal**: Users can analyze dataset quality with streaming metrics, filter episodes by quality scores, and export results for downstream tools
@@ -164,7 +165,7 @@ Note: Phase 5 depends on Phase 2 (not Phase 4), so Phases 3-4 and Phase 5 could 
 |-------|----------------|--------|-----------|
 | 1. Core Types and Project Scaffolding | 2/2 | Complete    | 2026-02-22 |
 | 2. LeRobot v3 End-to-End Pipeline | 0/4 | Complete    | 2026-02-22 |
-| 3. Parallel Pipeline and Error Handling | 0/? | Not started | - |
+| 3. Parallel Pipeline and Error Handling | 3/4 | In progress | - |
 | 4. Quality Analysis and Filtering | 0/? | Not started | - |
 | 5. Remaining Format Readers | 0/? | Not started | - |
 | 6. Remaining Format Writers | 0/? | Not started | - |
