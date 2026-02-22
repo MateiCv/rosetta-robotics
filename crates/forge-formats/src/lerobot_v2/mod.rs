@@ -9,6 +9,8 @@
 
 pub mod info;
 pub mod reader;
+pub mod writer;
 
 pub use info::LeRobotV2Detector;
 pub use reader::LeRobotV2Reader;
+pub use writer::LeRobotV2Writer;
