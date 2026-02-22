@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A complete Rust rewrite of Forge — the normalization layer for robotics datasets. Forge converts between RLDS, LeRobot v2/v3, HDF5, Zarr, RoboDM, and ROS bag formats with bidirectional support. The Rust rewrite targets 5-15x performance improvement over the Python implementation through zero-copy pipelines, true thread parallelism, and SIMD-accelerated quality analysis, while maintaining full feature parity.
+A complete Rust rewrite of Forge — the normalization layer for robotics datasets. Forge converts between RLDS, LeRobot v2/v3, HDF5, Zarr, RoboDM, and ROS bag formats with bidirectional support. The Rust rewrite delivers zero-copy pipelines, true thread parallelism via rayon, SIMD-accelerated quality analysis, and native Arrow Parquet I/O — targeting 5-15x performance over the Python implementation while maintaining full feature parity.
 
 ## Core Value
 
@@ -12,46 +12,58 @@ Convert any robotics dataset format to any other format as fast as the hardware 
 
 ### Validated
 
-<!-- Capabilities proven in the existing Python implementation -->
+<!-- v1.0 Core Pipeline (shipped 2026-02-22) -->
+- ✓ Pure Rust CLI binary (no Python runtime dependency) — v1.0
+- ✓ LeRobot v3 reading and writing with round-trip validation — v1.0
+- ✓ H.264 video encoding/decoding with keyframe control — v1.0
+- ✓ Zero-copy video decode/encode pipeline (Bytes, no intermediate alloc) — v1.0
+- ✓ True thread parallelism via rayon work-stealing — v1.0
+- ✓ Lock-free chunked Parquet writing (Arrow native) — v1.0
+- ✓ Error continuation with failure collection (--fail-on-error override) — v1.0
+- ✓ Deterministic output mode (bit-for-bit identical) — v1.0
+- ✓ Progress bars with ETA, throughput, and memory tracking — v1.0
+- ✓ Prefetching frame decoder with bounded channel — v1.0
+- ✓ Streaming single-pass quality analysis with early exit — v1.0
+- ✓ SIMD-accelerated quality metrics (jerk, histogram, entropy via pulp) — v1.0
+- ✓ 7 quality metrics: smoothness, dead actions, chatter, static, timestamps, saturation, entropy — v1.0
+- ✓ Composite quality scoring with configurable weights — v1.0
+- ✓ Episode filtering by quality threshold with dry-run mode — v1.0
+- ✓ Lazy episode filtering (metadata-only before full analysis) — v1.0
+- ✓ JSON export of quality reports — v1.0
+- ✓ CI/CD pipeline with Linux + macOS matrix testing — v1.0
+- ✓ Format registry with auto-detection — v1.0
+- ✓ Camera name remapping during conversion — v1.0
 
+<!-- Python-validated capabilities (from existing implementation) -->
 - ✓ Format detection from filesystem structure — existing
 - ✓ Dataset inspection with schema analysis — existing
 - ✓ RLDS/TFRecord reading — existing
 - ✓ LeRobot v2 reading — existing
-- ✓ LeRobot v3 reading and writing — existing
 - ✓ HDF5 reading (robomimic, ACT/ALOHA) — existing
 - ✓ Zarr reading (Diffusion Policy, UMI) — existing
 - ✓ ROS bag reading (ROS 1 + ROS 2 MCAP) — existing
 - ✓ RoboDM reading — existing
-- ✓ Field mapping and camera name remapping during conversion — existing
-- ✓ Quality metrics (smoothness, dead actions, gripper chatter, entropy, saturation) — existing
-- ✓ Episode filtering by quality score and flags — existing
 - ✓ HuggingFace Hub dataset downloading — existing
 - ✓ Interactive dataset visualization — existing
-- ✓ Parallel episode processing — existing
-- ✓ Lazy frame loading for memory efficiency — existing
-- ✓ Video encoding (H.264 MP4) for LeRobot format — existing
 - ✓ YAML-based conversion configuration — existing
+- ✓ Lazy frame loading for memory efficiency — existing
 
 ### Active
 
-<!-- New capabilities for the Rust rewrite -->
+<!-- Remaining capabilities for v2.0+ milestones -->
 
-- [ ] Pure Rust CLI binary (no Python runtime dependency)
-- [ ] Bidirectional conversion for ALL formats (RLDS, LeRobot v2/v3, HDF5, Zarr, RoboDM)
-- [ ] Zero-copy video decode/encode pipeline
-- [ ] True thread parallelism via rayon (no serialization overhead)
-- [ ] Streaming single-pass quality analysis with early exit
-- [ ] SIMD-accelerated quality metrics
-- [ ] Lock-free chunked Parquet writing
-- [ ] Prefetching frame decoder with ring buffer
-- [ ] Lazy episode filtering (metadata-only until filter decision)
-- [ ] HuggingFace Hub upload support (push datasets)
-- [ ] Full interactive dataset viewer
+- [ ] Bidirectional conversion for ALL formats (RLDS, LeRobot v2, HDF5, Zarr, RoboDM, ROS bag, GR00T)
+- [ ] Format auto-detection for all 8 input formats
+- [ ] Full CLI: inspect, convert, quality, filter, hub download/upload, stats, export-video, visualize
+- [ ] YAML-based conversion config with field mapping, camera remapping, FPS override
+- [ ] HuggingFace Hub upload support (push datasets with LFS)
+- [ ] HuggingFace Hub download with authentication and caching
+- [ ] Full interactive dataset viewer (terminal-based)
 - [ ] ROS bag writing support
 - [ ] Cross-platform binary releases (Linux, macOS, Windows)
-- [ ] CI/CD pipeline with automated testing and releases
-- [ ] Comprehensive test suite with format round-trip tests
+- [ ] Shell completions for bash, zsh, fish
+- [ ] Field remapping during cross-format conversion
+- [ ] Comprehensive test suite with format round-trip tests across all formats
 
 ### Out of Scope
 
@@ -62,21 +74,11 @@ Convert any robotics dataset format to any other format as fast as the hardware 
 
 ## Context
 
-**Existing codebase:** Python implementation in `forge/` directory with ~12K lines across CLI, 8 format readers/writers, quality analysis, filtering, visualization, and Hub integration. Well-structured with protocol-based abstractions.
+**Current state (v1.0 shipped):** 9,974 lines of Rust across 6 crates (forge-core, forge-video, forge-formats, forge-quality, forge-pipeline, forge-cli). 134 passing tests. Full LeRobot v3 read/write pipeline with parallel conversion, quality analysis, and episode filtering at the library level. CLI supports `forge version`, `forge formats`, and `forge convert`.
 
-**Performance analysis of Python version:**
-- GIL + pickle serialization causes 60-70% overhead in parallel mode
-- Video pipeline copies frame data 3-4 times per frame
-- NumPy bridge crossings add 20-40ms per episode for quality analysis
-- Python dict→Parquet conversion costs 100ms+ per chunk
-- Format detection does O(N) filesystem checks
+**Tech stack:** Rust — clap (CLI), rayon (parallelism), arrow-rs v54 + parquet v54 (Parquet I/O), ffmpeg-next v8 (video), pulp 0.22 (SIMD), serde/serde_yaml_ng (config), indicatif (progress), crossbeam-channel (prefetch), bytes (zero-copy).
 
-**Key Rust advantages identified:**
-- rayon thread pool: shared memory, no serialization, work-stealing
-- Zero-copy video: borrow frames through read→transform→encode chain
-- ndarray + SIMD: native vectorized quality metrics without bridge overhead
-- arrow-rs: direct Arrow buffer construction, no Python dict intermediary
-- Ownership/RAII: automatic memory management, no manual cache clearing
+**Remaining work:** Phases 5-8 cover 8 additional format readers (RLDS, LeRobot v2, HDF5, Zarr, ROS bag, RoboDM, GR00T), 6 format writers, full CLI with all subcommands, Hub integration, visualization, and cross-platform releases. 34 additional requirements.
 
 **Robotics ecosystem context:** Forge serves the robotics ML community converting between Google's RLDS (Open-X Embodiment), HuggingFace's LeRobot, Stanford's HDF5 (robomimic/ACT), Columbia's Zarr (Diffusion Policy), Berkeley's RoboDM, and ROS bags. The primary conversion target is LeRobot v3 (Parquet + MP4).
 
@@ -92,11 +94,15 @@ Convert any robotics dataset format to any other format as fast as the hardware 
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Pure Rust CLI (no PyO3) | Maximum performance, no Python runtime dependency, simpler distribution | — Pending |
-| rayon for parallelism | Work-stealing, zero serialization, battle-tested | — Pending |
-| arrow-rs for Parquet | Native Arrow buffers, no Python intermediary, zero-copy potential | — Pending |
-| clap for CLI | Rust standard, derives, shell completions | — Pending |
-| Bidirectional all formats | Full ecosystem coverage, not just LeRobot-centric | — Pending |
+| Pure Rust CLI (no PyO3) | Maximum performance, no Python runtime dependency, simpler distribution | ✓ Good — single binary, no runtime deps beyond FFmpeg |
+| rayon for parallelism | Work-stealing, zero serialization, battle-tested | ✓ Good — local pool avoids test conflicts, memory throttling works |
+| arrow-rs v54 for Parquet | Native Arrow buffers, no Python intermediary, zero-copy potential | ✓ Good — FixedSizeList schema matches LeRobot v3 exactly |
+| ffmpeg-next v8 for video | Rust bindings to system FFmpeg, decode + encode | ✓ Good — v8 required for FFmpeg 8.x compat (avfft.h removed) |
+| pulp 0.22 for SIMD | Runtime CPU detection, auto-vectorization dispatch | ✓ Good — 4 kernels vectorized, no unsafe code |
+| bytes for zero-copy | Arc-backed byte sharing, single ownership transfer | ✓ Good — DecodedFrame.data passes through pipeline with no copies |
+| Composite 0-1 (not 0-10) | Consistent with individual metric normalization range | ✓ Good — avoids confusion with Python's 0-10 scale |
+| Entropy buffers O(T*D) | Histogram needs all values; 1.6MB max per episode acceptable | ✓ Good — other 6 metrics O(1), entropy is the documented exception |
+| Bidirectional all formats | Full ecosystem coverage, not just LeRobot-centric | — Pending (Phase 5-6) |
 
 ---
-*Last updated: 2026-02-21 after initialization*
+*Last updated: 2026-02-22 after v1.0 milestone*
