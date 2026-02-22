@@ -39,6 +39,24 @@ enum Commands {
         /// Target format
         #[arg(long, default_value = "lerobot-v3")]
         target_format: String,
+        /// Stop on first episode failure (default: continue and report all failures)
+        #[arg(long)]
+        fail_on_error: bool,
+        /// Produce bit-for-bit identical output (opt-in; parallel processing still used)
+        #[arg(long)]
+        deterministic: bool,
+        /// Number of worker threads (default: auto-detect all cores)
+        #[arg(long)]
+        threads: Option<usize>,
+        /// Suppress all progress output (only errors on stderr)
+        #[arg(long)]
+        quiet: bool,
+        /// Output a single final JSON summary instead of progress bar
+        #[arg(long)]
+        json: bool,
+        /// Per-episode verbose log lines
+        #[arg(short, long)]
+        verbose: bool,
     },
 }
 
@@ -52,7 +70,23 @@ fn main() {
             source,
             output,
             target_format,
-        } => run_convert(&source, &output, &target_format),
+            fail_on_error,
+            deterministic,
+            threads,
+            quiet,
+            json,
+            verbose,
+        } => run_convert(
+            &source,
+            &output,
+            &target_format,
+            fail_on_error,
+            deterministic,
+            threads,
+            quiet,
+            json,
+            verbose,
+        ),
     }
 }
 
@@ -109,28 +143,50 @@ fn print_formats() {
     }
 }
 
-fn run_convert(source: &str, output: &str, target_format: &str) {
+#[allow(clippy::too_many_arguments)]
+fn run_convert(
+    source: &str,
+    output: &str,
+    target_format: &str,
+    fail_on_error: bool,
+    deterministic: bool,
+    threads: Option<usize>,
+    quiet: bool,
+    json: bool,
+    verbose: bool,
+) {
     let config = ConversionConfig {
         target_format: Some(target_format.to_string()),
+        fail_on_error,
+        deterministic,
+        num_workers: threads.unwrap_or(0),
+        quiet,
+        json_output: json,
+        verbose,
         ..ConversionConfig::default()
     };
 
     let converter = Converter::new(config);
 
-    println!("Converting: {} -> {}", source, output);
-    println!("Target format: {}", target_format);
+    // Print header to stderr (not stdout) so --json output is clean on stdout.
+    if !quiet && !json {
+        eprintln!("Converting: {} -> {}", source, output);
+        eprintln!("Target format: {}", target_format);
+    }
 
     match converter.convert(Path::new(source), Path::new(output)) {
         Ok(result) => {
-            println!("\nConversion complete:");
-            println!("  Episodes converted: {}", result.episodes_converted);
-            println!("  Episodes failed:    {}", result.episodes_failed);
-            println!("  Total frames:       {}", result.total_frames);
-            if !result.errors.is_empty() {
-                println!("\nErrors:");
-                for err in &result.errors {
-                    println!("  - {err}");
-                }
+            // Print summary to stderr (unless json mode -- Converter already printed JSON).
+            if !quiet && !json {
+                eprintln!("\nConversion complete:");
+                eprintln!("  Episodes converted: {}", result.episodes_converted);
+                eprintln!("  Episodes failed:    {}", result.episodes_failed);
+                eprintln!("  Total frames:       {}", result.total_frames);
+            }
+
+            // Non-zero exit code if any episodes failed (CI-friendly).
+            if result.episodes_failed > 0 {
+                std::process::exit(1);
             }
         }
         Err(e) => {
