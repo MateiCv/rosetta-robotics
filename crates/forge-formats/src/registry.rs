@@ -12,6 +12,8 @@ use crate::groot::reader::GR00TReader;
 use crate::lerobot_v2::reader::LeRobotV2Reader;
 use crate::lerobot_v3::reader::LeRobotV3Reader;
 use crate::lerobot_v3::writer::LeRobotV3Writer;
+#[cfg(feature = "rlds-format")]
+use crate::rlds::RLDSReader;
 use crate::traits::{FormatReader, FormatWriter};
 #[cfg(feature = "zarr-format")]
 use crate::zarr::ZarrReader;
@@ -68,9 +70,23 @@ pub fn detect_format(path: &Path) -> ForgeResult<&'static str> {
         return Ok("lerobot-v3");
     }
 
+    // GR00T must be checked before plain v2 (more specific).
+    let groot_reader = GR00TReader::new();
+    if groot_reader.can_read(path) {
+        return Ok("groot");
+    }
+
     let v2_reader = LeRobotV2Reader;
     if v2_reader.can_read(path) {
         return Ok("lerobot-v2");
+    }
+
+    #[cfg(feature = "rlds-format")]
+    {
+        let rlds_reader = RLDSReader;
+        if rlds_reader.can_read(path) {
+            return Ok("rlds");
+        }
     }
 
     #[cfg(feature = "zarr-format")]
@@ -91,6 +107,9 @@ pub fn get_reader(format_name: &str) -> ForgeResult<Box<dyn FormatReader>> {
     match format_name {
         "lerobot-v3" => Ok(Box::new(LeRobotV3Reader)),
         "lerobot-v2" => Ok(Box::new(LeRobotV2Reader)),
+        "groot" => Ok(Box::new(GR00TReader::new())),
+        #[cfg(feature = "rlds-format")]
+        "rlds" => Ok(Box::new(RLDSReader)),
         #[cfg(feature = "zarr-format")]
         "zarr" => Ok(Box::new(ZarrReader)),
         _ => Err(ForgeError::UnsupportedFormat {

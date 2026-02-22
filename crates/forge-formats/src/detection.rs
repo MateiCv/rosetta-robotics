@@ -15,6 +15,8 @@ use forge_core::{ForgeError, ForgeResult};
 use crate::groot::GR00TDetector;
 use crate::lerobot_v2::LeRobotV2Detector;
 use crate::lerobot_v3::reader::LeRobotV3Reader;
+#[cfg(feature = "rlds-format")]
+use crate::rlds::RLDSDetector;
 use crate::traits::FormatReader;
 #[cfg(feature = "zarr-format")]
 use crate::zarr::ZarrDetector;
@@ -67,7 +69,8 @@ pub fn detect_format_scored(path: &Path) -> ForgeResult<Vec<DetectionResult>> {
         // Phase 5 detectors: most specific first.
         Box::new(GR00TDetector), // Must be before LeRobotV2 (more specific)
         // Box::new(RoboDMDetector),
-        // Box::new(RLDSDetector),
+        #[cfg(feature = "rlds-format")]
+        Box::new(RLDSDetector),
         #[cfg(feature = "zarr-format")]
         Box::new(ZarrDetector),
         // Box::new(HDF5Detector),
