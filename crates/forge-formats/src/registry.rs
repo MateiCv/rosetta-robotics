@@ -8,6 +8,9 @@ use std::path::Path;
 
 use forge_core::{ForgeError, ForgeResult};
 
+use crate::lerobot_v3::reader::LeRobotV3Reader;
+use crate::traits::FormatReader;
+
 /// Describes the capabilities of a single dataset format.
 #[derive(Debug, Clone, Copy)]
 pub struct FormatCapability {
@@ -38,12 +41,26 @@ pub fn all_formats() -> &'static [FormatCapability] {
 /// Attempt to auto-detect the dataset format at `path`.
 ///
 /// Iterates over registered format readers and returns the first format
-/// whose `can_read()` returns `true`. Currently a stub -- full implementation
-/// arrives with the LeRobot v3 reader in Plan 03.
+/// whose `can_read()` returns `true`.
 pub fn detect_format(path: &Path) -> ForgeResult<&'static str> {
-    // Stub: no readers registered yet to probe.
-    // Full implementation will iterate FormatReader instances.
+    // Check each registered reader in priority order.
+    let reader = LeRobotV3Reader;
+    if reader.can_read(path) {
+        return Ok("lerobot-v3");
+    }
+
     Err(ForgeError::FormatDetection {
         path: path.to_path_buf(),
     })
+}
+
+/// Get a boxed format reader for the given format name.
+pub fn get_reader(format_name: &str) -> ForgeResult<Box<dyn FormatReader>> {
+    match format_name {
+        "lerobot-v3" => Ok(Box::new(LeRobotV3Reader)),
+        _ => Err(ForgeError::UnsupportedFormat {
+            format_name: format_name.to_string(),
+            available: all_formats().iter().map(|f| f.name.to_string()).collect(),
+        }),
+    }
 }

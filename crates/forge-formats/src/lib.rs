@@ -15,5 +15,9 @@ pub mod registry;
 pub mod traits;
 
 // Re-export key types for convenience.
-pub use registry::{all_formats, detect_format, FormatCapability};
+pub use registry::{all_formats, detect_format, get_reader, FormatCapability};
 pub use traits::{FormatReader, FormatWriter};
+
+#[cfg(test)]
+mod tests;
+

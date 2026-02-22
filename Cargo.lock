@@ -688,6 +688,7 @@ name = "forge-formats"
 version = "0.1.0"
 dependencies = [
  "arrow",
+ "bytes",
  "forge-core",
  "forge-video",
  "parquet",
