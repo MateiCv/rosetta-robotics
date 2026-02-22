@@ -1,664 +1,744 @@
-# Architecture Research
+# Architecture: v2.0 Format Breadth & Integration
 
-**Domain:** High-performance Rust CLI for robotics dataset format conversion
+**Domain:** Integrating 7 format readers, 6 writers, Hub, visualization, and CLI into existing 6-crate Rust workspace
 **Researched:** 2026-02-21
-**Confidence:** HIGH
+**Confidence:** HIGH (based on direct codebase analysis + ecosystem research)
 
-## Standard Architecture
+## Executive Summary
 
-### System Overview
+The existing v1.0 architecture is well-designed for extension. The `FormatReader`/`FormatWriter` traits in `forge-formats/src/traits.rs` define clean integration points. The `registry.rs` pattern (static `all_formats()` + `detect_format()` + `get_reader()`/`get_writer()` match arms) scales linearly with new formats -- each new format requires one module directory, one `FormatCapability` entry, one match arm in each of three functions, and one `can_read()` implementation.
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                           CLI Layer (clap)                               │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
-│  │ inspect  │  │ convert  │  │ quality  │  │  filter  │  │   hub    │  │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘  │
-├───────┴──────────────┴──────────────┴──────────────┴──────────────┴──────┤
-│                       Orchestration Layer                                │
-│  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐             │
-│  │   Inspector    │  │   Converter    │  │  FilterEngine  │             │
-│  └───────┬────────┘  └───────┬────────┘  └───────┬────────┘             │
-├──────────┴───────────────────┴───────────────────┴──────────────────────┤
-│                     Pipeline Layer (rayon)                               │
-│  ┌──────────────────────────────────────────────────────────────┐       │
-│  │  EpisodeStream → [Transform] → [QualityPass] → WriteSink    │       │
-│  └──────────────────────────────────────────────────────────────┘       │
-├─────────────────────────────────────────────────────────────────────────┤
-│                    Format Plugin Layer (enum dispatch)                   │
-│  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐   │
-│  │  RLDS  │ │LeRobV2 │ │LeRobV3 │ │  HDF5  │ │  Zarr  │ │ ROSBag │   │
-│  └────┬───┘ └────┬───┘ └────┬───┘ └────┬───┘ └────┬───┘ └────┬───┘   │
-├───────┴──────────┴──────────┴──────────┴──────────┴──────────┴────────┤
-│                         Core Layer                                      │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐               │
-│  │  Models  │  │  Config  │  │  Errors  │  │  Video   │               │
-│  │(Episode, │  │ (YAML/   │  │(thiserror│  │ (FFmpeg  │               │
-│  │ Frame,   │  │  TOML)   │  │  enums)  │  │   FFI)   │               │
-│  │ Arrow)   │  │          │  │          │  │          │               │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────┘               │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+The key architectural decisions for v2.0 are:
+1. **All format readers/writers stay in `forge-formats`** -- no new crates for individual formats
+2. **Two new crates**: `forge-hub` (HuggingFace Hub HTTP client) and `forge-viz` (terminal visualization)
+3. **`forge-core` gains YAML config enrichments** but no structural changes to Episode/Frame/LazyArray
+4. **`forge-cli` grows from 3 subcommands to 10+** with a `commands/` module structure
+5. **Feature flags on `forge-formats`** gate heavy native dependencies (hdf5-sys, rosbag)
 
-### Component Responsibilities
+## Existing Architecture (v1.0 Baseline)
 
-| Component | Responsibility | Typical Implementation |
-|-----------|----------------|------------------------|
-| **CLI Layer** | Argument parsing, user feedback, progress bars | `clap` derive API with subcommand enum; `indicatif` for progress |
-| **Orchestration Layer** | Coordinates multi-step workflows (inspect, convert, filter) | Plain structs owning references to registry + config |
-| **Pipeline Layer** | Parallel episode streaming with transform/quality passes | `rayon::par_bridge()` on episode iterators; channel-based sink |
-| **Format Plugin Layer** | Read/write specific formats through unified trait | Enum dispatch (all formats known at compile time) |
-| **Core Models** | Canonical intermediate representation for robotics data | `Episode`, `Frame`, Arrow `RecordBatch` for tabular data |
-| **Config** | Conversion job specification, field mappings | `serde` deserialize from YAML; validated at load time |
-| **Errors** | Typed error hierarchy with context | `thiserror` enums per crate; `anyhow` at CLI boundary only |
-| **Video** | Decode/encode video frames via FFmpeg | `ffmpeg-next` safe wrapper over `ffmpeg-sys-next` FFI |
-
-## Recommended Project Structure
+### Crate Dependency Graph
 
 ```
-forge-rust-rewrite/
-├── Cargo.toml                      # Workspace root
-├── crates/
-│   ├── forge-core/                 # Core types, zero external deps
-│   │   ├── Cargo.toml
-│   │   └── src/
-│   │       ├── lib.rs
-│   │       ├── episode.rs          # Episode, Frame structs
-│   │       ├── schema.rs           # DatasetInfo, FieldSchema, CameraInfo
-│   │       ├── arrow_ext.rs        # Arrow RecordBatch helpers
-│   │       ├── config.rs           # ConversionConfig, FieldMapping
-│   │       └── error.rs            # ForgeError enum (thiserror)
-│   │
-│   ├── forge-video/                # FFmpeg encode/decode
-│   │   ├── Cargo.toml              # depends: forge-core, ffmpeg-next
-│   │   └── src/
-│   │       ├── lib.rs
-│   │       ├── decoder.rs          # VideoDecoder: path → frame iterator
-│   │       ├── encoder.rs          # VideoEncoder: frame iterator → MP4
-│   │       └── frame.rs            # VideoFrame (borrows raw buffer)
-│   │
-│   ├── forge-formats/              # All format readers/writers
-│   │   ├── Cargo.toml              # depends: forge-core, forge-video
-│   │   └── src/
-│   │       ├── lib.rs              # FormatReader/FormatWriter traits
-│   │       ├── registry.rs         # Enum-dispatch registry
-│   │       ├── detect.rs           # Format auto-detection
-│   │       ├── rlds/
-│   │       │   ├── mod.rs
-│   │       │   ├── reader.rs
-│   │       │   └── writer.rs
-│   │       ├── lerobot_v2/
-│   │       │   ├── mod.rs
-│   │       │   └── reader.rs
-│   │       ├── lerobot_v3/
-│   │       │   ├── mod.rs
-│   │       │   ├── reader.rs
-│   │       │   └── writer.rs
-│   │       ├── hdf5/
-│   │       │   ├── mod.rs
-│   │       │   ├── reader.rs
-│   │       │   └── writer.rs
-│   │       ├── zarr/
-│   │       │   ├── mod.rs
-│   │       │   ├── reader.rs
-│   │       │   └── writer.rs
-│   │       ├── rosbag/
-│   │       │   ├── mod.rs
-│   │       │   ├── reader.rs
-│   │       │   └── writer.rs
-│   │       └── robodm/
-│   │           ├── mod.rs
-│   │           ├── reader.rs
-│   │           └── writer.rs
-│   │
-│   ├── forge-quality/              # Quality analysis engine
-│   │   ├── Cargo.toml              # depends: forge-core, ndarray
-│   │   └── src/
-│   │       ├── lib.rs
-│   │       ├── analyzer.rs         # Streaming quality pass
-│   │       ├── metrics.rs          # Individual metric functions
-│   │       ├── report.rs           # QualityReport, EpisodeQuality
-│   │       └── config.rs           # Thresholds, weights
-│   │
-│   ├── forge-pipeline/             # Conversion pipeline orchestration
-│   │   ├── Cargo.toml              # depends: forge-core, forge-formats, forge-quality, rayon
-│   │   └── src/
-│   │       ├── lib.rs
-│   │       ├── converter.rs        # Main convert orchestrator
-│   │       ├── inspector.rs        # Inspect orchestrator
-│   │       ├── filter.rs           # Filter engine
-│   │       └── stream.rs           # EpisodeStream adapter for rayon
-│   │
-│   └── forge-cli/                  # Binary entry point
-│       ├── Cargo.toml              # depends: forge-pipeline, clap, indicatif
-│       └── src/
-│           ├── main.rs
-│           ├── commands/
-│           │   ├── mod.rs
-│           │   ├── inspect.rs
-│           │   ├── convert.rs
-│           │   ├── quality.rs
-│           │   ├── filter.rs
-│           │   └── hub.rs
-│           ├── output.rs           # Rich terminal output formatting
-│           └── progress.rs         # Progress bar management
-│
-├── tests/                          # Integration tests
-│   ├── roundtrip.rs                # Format A → B → A identity tests
-│   └── fixtures/                   # Sample datasets
-│
-└── benches/                        # Criterion benchmarks
-    ├── pipeline.rs
-    └── quality.rs
+forge-core  (types: Episode, Frame, LazyArray, LazyImage, DatasetInfo, ConversionConfig, ForgeError)
+    |
+    +---> forge-video       (H.264 encode/decode via ffmpeg-next)
+    |
+    +---> forge-formats     (FormatReader/FormatWriter traits, registry, lerobot_v3 reader+writer)
+    |         |
+    |         +---> forge-video
+    |
+    +---> forge-quality     (7 metrics, SIMD, analyzer, filter)
+    |         |
+    |         +---> forge-formats
+    |
+    +---> forge-pipeline    (Converter, parallel rayon, prefetch, progress)
+    |         |
+    |         +---> forge-formats
+    |
+    +---> forge-cli         (clap: version, formats, convert)
+              |
+              +---> forge-pipeline
 ```
 
-### Structure Rationale
+### Current Trait Architecture
 
-- **forge-core/:** Zero external dependencies (only `arrow`, `serde`, `thiserror`). Every other crate depends on this. Compiles fast, changes rarely. Defines the "language" all components speak.
-- **forge-video/:** Isolated because FFmpeg FFI is the single most complex build dependency. Other crates that do not need video (quality analysis on numeric data) avoid pulling in FFmpeg. Build failures in FFmpeg linking do not cascade to the rest of the workspace.
-- **forge-formats/:** Single crate for all formats because format implementations share the trait definitions and the enum-dispatch registry. Separating each format into its own crate would create 7+ tiny crates with circular dependency on the trait definitions. Internal modules (`rlds/`, `hdf5/`, etc.) provide isolation without crate-level overhead.
-- **forge-quality/:** Separate crate because quality analysis is an optional pass. It depends only on `forge-core` and `ndarray`. This boundary means quality can run as a standalone `forge quality` command without pulling in format writers.
-- **forge-pipeline/:** The orchestration crate that wires formats, quality, and parallelism together. This is where `rayon` lives. It owns the `Converter`, `Inspector`, and `FilterEngine` — the three main workflows.
-- **forge-cli/:** Thin binary crate. Contains only argument parsing (`clap`), terminal output (`indicatif`, `console`), and dispatch to `forge-pipeline`. No business logic. Easy to replace with a different UI or integrate as a library by depending on `forge-pipeline` directly.
-
-## Architectural Patterns
-
-### Pattern 1: Enum Dispatch for Format Plugins
-
-**What:** Use a Rust enum with one variant per format instead of `Box<dyn FormatReader>`. Since all formats are known at compile time (project explicitly excludes runtime plugins), this avoids vtable indirection and enables the compiler to inline format-specific code.
-
-**When to use:** Always for this project. The format set is closed and changes only when a new format is added to the source code.
-
-**Trade-offs:** Adding a new format requires modifying the enum (but this is a feature, not a bug — it forces conscious integration). Approximately 10x faster dispatch than trait objects in tight loops, which matters when processing millions of frames.
-
-**Example:**
 ```rust
-use enum_dispatch::enum_dispatch;
-
-#[enum_dispatch]
+// forge-formats/src/traits.rs -- UNCHANGED for v2.0
 pub trait FormatReader: Send + Sync {
-    /// Check if this reader can handle the given path.
+    fn format_name(&self) -> &str;
     fn can_read(&self, path: &Path) -> bool;
-
-    /// Inspect dataset metadata without reading episode data.
-    fn inspect(&self, path: &Path) -> Result<DatasetInfo, ForgeError>;
-
-    /// Return an iterator over episodes. Each episode is lazy —
-    /// frames are not decoded until iterated.
-    fn read_episodes(&self, path: &Path) -> Result<EpisodeIter, ForgeError>;
-
-    /// Read a single episode by ID.
-    fn read_episode(&self, path: &Path, episode_id: u64) -> Result<Episode, ForgeError>;
+    fn inspect(&self, path: &Path) -> ForgeResult<DatasetInfo>;
+    fn read_episodes(&self, path: &Path) -> ForgeResult<Box<dyn Iterator<Item = ForgeResult<Episode>>>>;
 }
 
-#[enum_dispatch(FormatReader)]
-pub enum AnyReader {
-    Rlds(RldsReader),
-    LeRobotV2(LeRobotV2Reader),
-    LeRobotV3(LeRobotV3Reader),
-    Hdf5(Hdf5Reader),
-    Zarr(ZarrReader),
-    RosBag(RosBagReader),
-    RoboDm(RoboDmReader),
+pub trait FormatWriter: Send + Sync {
+    fn format_name(&self) -> &str;
+    fn write_episode(&mut self, episode: &Episode, output_path: &Path, episode_index: usize) -> ForgeResult<()>;
+    fn finalize(&mut self, output_path: &Path, dataset_info: &DatasetInfo) -> ForgeResult<()>;
+    fn set_deterministic(&mut self, _deterministic: bool) {}
 }
 ```
 
-### Pattern 2: Zero-Copy Episode Pipeline
+The traits are deliberately simple. Episode is the universal intermediate representation. Readers produce Episodes from format-specific on-disk layouts; writers consume Episodes and produce format-specific output. The pipeline (`forge-pipeline/src/convert.rs`) orchestrates the flow via `registry::get_reader()` and `registry::get_writer()`.
 
-**What:** Episodes flow from reader to writer as borrowed data wherever possible. The intermediate `Episode` struct holds either owned data (for formats that produce owned buffers like HDF5) or borrowed slices (for memory-mapped formats like Parquet/Arrow). Video frames use `bytes::Bytes` for reference-counted, splittable buffers that avoid copies through the decode-transform-encode chain.
+### Current Registry Pattern
 
-**When to use:** For the main read-transform-write hot path. Quality analysis and field remapping operate on borrowed slices of the episode data.
-
-**Trade-offs:** Requires careful lifetime management. Some formats (HDF5, TFRecord) inherently produce owned data, so zero-copy is not always achievable end-to-end, but the pipeline avoids gratuitous copies between stages.
-
-**Example:**
 ```rust
-use bytes::Bytes;
-
-/// A single timestep in a robotics trajectory.
-pub struct Frame {
-    /// Numerical state/action data as Arrow arrays (zero-copy sliceable).
-    pub state: Option<arrow::array::Float32Array>,
-    pub action: Option<arrow::array::Float32Array>,
-
-    /// Camera images as ref-counted byte buffers.
-    /// Bytes::slice() creates a view without copying.
-    pub images: HashMap<String, Bytes>,
-
-    /// Timestamp relative to episode start.
-    pub timestamp: f64,
+// forge-formats/src/registry.rs
+pub fn detect_format(path: &Path) -> ForgeResult<&'static str> {
+    let reader = LeRobotV3Reader;
+    if reader.can_read(path) { return Ok("lerobot-v3"); }
+    Err(ForgeError::FormatDetection { path: path.to_path_buf() })
 }
 
-/// An episode is a lazy iterator over frames.
-/// Frames are decoded on demand — the reader yields them one at a time.
-pub struct Episode {
-    pub id: u64,
-    pub metadata: EpisodeMetadata,
-    frames: Box<dyn Iterator<Item = Result<Frame, ForgeError>> + Send>,
+pub fn get_reader(format_name: &str) -> ForgeResult<Box<dyn FormatReader>> {
+    match format_name {
+        "lerobot-v3" => Ok(Box::new(LeRobotV3Reader)),
+        _ => Err(ForgeError::UnsupportedFormat { ... }),
+    }
 }
 
-impl Episode {
-    /// Consume the episode frame-by-frame.
-    /// Only one frame is in memory at a time unless explicitly collected.
-    pub fn frames(&mut self) -> &mut dyn Iterator<Item = Result<Frame, ForgeError>> {
-        &mut self.frames
+pub fn get_writer(format_name: &str) -> ForgeResult<Box<dyn FormatWriter>> {
+    match format_name {
+        "lerobot-v3" => Ok(Box::new(LeRobotV3Writer::new(30, "unknown"))),
+        _ => Err(ForgeError::UnsupportedFormat { ... }),
     }
 }
 ```
 
-### Pattern 3: Rayon Parallel Episode Processing
+This is the exact integration point for all new formats.
 
-**What:** Episodes are independent units of work. Use `rayon::par_bridge()` to fan out episode processing across the thread pool. Each thread gets its own reader context (readers implement `Send + Sync`). Writers use a channel-based sink pattern — worker threads send completed episodes to a single writer thread that handles sequential I/O (Parquet row group flushing, video muxing).
+## v2.0 Target Architecture
 
-**When to use:** For the `convert` command when processing datasets with many episodes. The `quality` command also parallelizes per-episode analysis.
-
-**Trade-offs:** Unlike Python's ProcessPoolExecutor, rayon threads share memory with zero serialization overhead. However, writers that maintain mutable state (Parquet file handles, video muxers) cannot be shared across threads. The channel-sink pattern solves this by decoupling parallel read/transform from sequential write.
-
-**Example:**
-```rust
-use rayon::prelude::*;
-use crossbeam_channel::{bounded, Sender};
-
-pub fn convert_parallel(
-    reader: &AnyReader,
-    writer: AnyWriter,
-    source: &Path,
-    output: &Path,
-    config: &ConversionConfig,
-) -> Result<ConversionResult, ForgeError> {
-    let dataset_info = reader.inspect(source)?;
-    let episode_ids: Vec<u64> = dataset_info.episode_ids.clone();
-
-    // Bounded channel prevents unbounded memory growth.
-    // Backpressure: if writer is slow, readers block.
-    let (tx, rx) = bounded::<WritableEpisode>(config.buffer_size.unwrap_or(8));
-
-    // Writer thread: sequential writes to output format.
-    let writer_handle = std::thread::spawn(move || {
-        let mut writer = writer;
-        for episode in rx {
-            writer.write_episode(&episode)?;
-        }
-        writer.finalize(output, &dataset_info)
-    });
-
-    // Reader/transform threads: parallel via rayon.
-    let result: Result<(), ForgeError> = episode_ids
-        .par_iter()
-        .try_for_each_with(tx, |tx, &episode_id| {
-            let episode = reader.read_episode(source, episode_id)?;
-            let transformed = apply_transforms(episode, config)?;
-            tx.send(transformed).map_err(|_| ForgeError::PipelineClosed)?;
-            Ok(())
-        });
-
-    result?;
-    writer_handle.join().map_err(|_| ForgeError::WriterPanicked)?
-}
-```
-
-### Pattern 4: Streaming Quality Pass
-
-**What:** Quality analysis runs as an inline pass on the episode stream rather than a separate post-processing step. Each metric is computed incrementally per-frame using running accumulators (mean, variance, min/max). Metrics that need the full episode (e.g., smoothness requiring finite differences) use a small ring buffer of the last N frames rather than collecting all frames.
-
-**When to use:** When `--quality` flag is passed to `convert`, or for the standalone `forge quality` command. The streaming pass avoids a second read of the data.
-
-**Trade-offs:** Slightly more complex than batch analysis, but avoids doubling I/O. Some metrics (global percentiles across episodes) require a two-phase approach: streaming per-episode metrics, then a final aggregation.
-
-**Example:**
-```rust
-/// Accumulates quality metrics frame-by-frame.
-pub struct QualityAccumulator {
-    smoothness: RunningVariance,
-    dead_action_count: u64,
-    gripper_transitions: u64,
-    total_frames: u64,
-    action_ring: RingBuffer<[f32; MAX_ACTION_DIM]>,
-}
-
-impl QualityAccumulator {
-    pub fn ingest_frame(&mut self, frame: &Frame) -> Result<(), ForgeError> {
-        if let Some(action) = &frame.action {
-            let values = action.values();
-            self.smoothness.update(values);
-            self.dead_action_count += is_dead_action(values) as u64;
-            self.action_ring.push(values);
-        }
-        self.total_frames += 1;
-        Ok(())
-    }
-
-    pub fn finalize(self) -> EpisodeQuality {
-        EpisodeQuality {
-            smoothness_score: self.smoothness.coefficient_of_variation(),
-            dead_action_ratio: self.dead_action_count as f64 / self.total_frames as f64,
-            // ...
-        }
-    }
-}
-```
-
-## Data Flow
-
-### Conversion Flow (Primary Hot Path)
+### Updated Crate Dependency Graph
 
 ```
-                         ┌──────────────────────────────────────┐
-                         │         rayon thread pool             │
-                         │                                      │
-Source Path ──→ Reader ──┤  Episode₁ → Transform → QualityPass ─┤──→ channel ──→ Writer ──→ Output
-                         │  Episode₂ → Transform → QualityPass ─┤              (single
-                         │  Episode₃ → Transform → QualityPass ─┤               thread)
-                         │  ...                                  │
-                         └──────────────────────────────────────┘
-                                                                      │
-                                                                      ├──→ Parquet files
-                                                                      ├──→ MP4 videos
-                                                                      └──→ metadata.json
+forge-core  (MODIFIED: enriched ConversionConfig, new ForgeError variants)
+    |
+    +---> forge-video       (UNCHANGED)
+    |
+    +---> forge-formats     (MODIFIED: +7 reader modules, +6 writer modules, enriched registry)
+    |         |
+    |         +---> forge-video
+    |         +---> [feature: hdf5]  hdf5-sys
+    |         +---> [feature: zarr]  zarrs
+    |         +---> [feature: rlds]  tfrecord, prost
+    |         +---> [feature: ros]   rosbag, mcap
+    |
+    +---> forge-quality     (UNCHANGED)
+    |
+    +---> forge-hub         (NEW: HuggingFace Hub download/upload)
+    |         |
+    |         +---> forge-core
+    |         +---> reqwest, hf-hub, tokio
+    |
+    +---> forge-viz         (NEW: terminal dataset viewer)
+    |         |
+    |         +---> forge-core, forge-formats
+    |         +---> ratatui, ratatui-image, crossterm
+    |
+    +---> forge-pipeline    (MODIFIED: wires Hub + viz integration)
+    |         |
+    |         +---> forge-formats, forge-hub, forge-viz
+    |
+    +---> forge-cli         (MODIFIED: 10+ subcommands, commands/ module tree)
+              |
+              +---> forge-pipeline, forge-hub, forge-viz
 ```
 
-**Step-by-step:**
+### New Crates Justification
 
-1. **CLI parses** `forge convert --source ./data --target lerobot_v3 --output ./out`
-2. **Orchestrator** resolves source format via `detect_format()` (filesystem structure heuristics)
-3. **Reader** yields `EpisodeIter` — a lazy iterator of episode IDs
-4. **Rayon** fans out: each thread calls `reader.read_episode(path, id)` independently (readers are `Send + Sync`)
-5. **Per-episode pipeline** (in worker thread):
-   - Decode frames lazily (video frames decoded via FFmpeg only when iterated)
-   - Apply field mappings (rename fields, remap cameras) — operates on borrowed slices
-   - If `--quality`: run `QualityAccumulator` inline, ingesting each frame as it passes through
-   - Collect transformed frames into `WritableEpisode`
-6. **Channel send** to writer thread (bounded channel provides backpressure)
-7. **Writer thread** receives episodes and writes:
-   - Tabular data: Arrow `RecordBatch` → Parquet via `ArrowWriter` (buffered per row group)
-   - Video data: Frame bytes → FFmpeg encoder → MP4 file
-   - Both writes happen for the same episode before pulling the next from the channel
-8. **Finalize**: Writer flushes metadata (LeRobot `metadata.json`, Parquet footers)
+**`forge-hub` (new crate):** HuggingFace Hub integration requires `reqwest` (async HTTP), `hf-hub` (official Rust client), and `tokio` (async runtime). These are heavyweight dependencies with long compile times and fundamentally different concerns (network I/O vs local data processing). Keeping Hub code in `forge-formats` would pull async runtime into a crate that is otherwise purely synchronous file I/O. A separate crate means `forge convert` (local-only) does not compile or link against reqwest/tokio.
 
-### Inspection Flow
+**`forge-viz` (new crate):** Terminal visualization requires `ratatui`, `ratatui-image`, and `crossterm`. These TUI dependencies are irrelevant to conversion, quality, or Hub operations. A separate crate keeps the binary size smaller when viz is not used and avoids polluting other crates with TUI concerns.
+
+**Why NOT separate crates per format:** The v1.0 architecture research correctly identified that splitting formats into individual crates creates a dependency fan-in/fan-out problem. All format modules share `FormatReader`/`FormatWriter` traits, the `Episode` type, and often shared utilities (Parquet I/O helpers, video path resolution). Internal modules within `forge-formats` provide isolation without crate-level overhead.
+
+## Format Integration: Per-Format Data Flow
+
+### Pattern: Adding a New Format Reader
+
+Every new reader follows this template:
 
 ```
-Source Path ──→ detect_format() ──→ Reader.inspect() ──→ SchemaAnalyzer ──→ DatasetInfo
-                                         │
-                                         └──→ Sample 3-5 episodes for schema inference
+crates/forge-formats/src/{format_name}/
+    mod.rs          -- re-exports, detection function
+    reader.rs       -- impl FormatReader for {Format}Reader
+    writer.rs       -- impl FormatWriter for {Format}Writer (if writable)
+    {helpers}.rs    -- format-specific parsing helpers
 ```
 
-This is sequential and fast. No parallelism needed — inspection reads metadata and samples a few episodes.
+Integration requires exactly 4 touch points in existing code:
 
-### Quality-Only Flow
+1. **`forge-formats/src/lib.rs`**: Add `pub mod {format_name};`
+2. **`registry.rs::all_formats()`**: Add `FormatCapability` entry
+3. **`registry.rs::detect_format()`**: Add `can_read()` check in priority order
+4. **`registry.rs::get_reader()`**: Add match arm
+5. **`registry.rs::get_writer()`**: Add match arm (if writable)
 
+No changes to `forge-core`, `forge-pipeline`, `forge-quality`, or `forge-cli` are needed per format.
+
+### Format 1: RLDS/TFRecord Reader
+
+**On-disk structure:** `*.tfrecord` files containing serialized `tf.train.Example` protobufs. RLDS wraps these in an episode structure where each Example contains `steps` as a repeated feature.
+
+**Data flow:**
 ```
-Source Path ──→ Reader ──→ rayon par_iter ──→ QualityAccumulator per episode ──→ Aggregate ──→ QualityReport
+.tfrecord files --> tfrecord crate (binary parsing) --> prost (protobuf decode)
+    --> tf.train.Example --> extract features map
+    --> map "steps" Feature to Vec<Frame>
+    --> map "observation/image*" to LazyImage (decode JPEG/PNG bytes)
+    --> map "observation/state" to LazyArray
+    --> map "action" to LazyArray
+    --> Episode
 ```
 
-Same parallel pattern as conversion but without the writer. Each thread reads an episode, streams frames through `QualityAccumulator`, and returns `EpisodeQuality`. Final aggregation is sequential (merging per-episode scores).
+**Dependencies:** `tfrecord` crate (pure Rust TFRecord reader), `prost` (protobuf decode). No TensorFlow dependency.
 
-### Key Data Flows
+**Detection:** Look for `*.tfrecord` files or `dataset_info.json` with RLDS-style schema. RLDS datasets from Open-X Embodiment typically have a `dataset_info.json` at the root.
 
-1. **Arrow zero-copy path:** Parquet-based formats (LeRobot v2/v3) read Arrow `RecordBatch` directly from Parquet files via `arrow-rs`. These batches can be sliced and filtered without copying. When writing to Parquet, the same Arrow buffers are passed to `ArrowWriter` — the data never leaves Arrow format.
+**Writer:** Writes `tf.train.Example` protobufs into TFRecord files using CRC32C checksums. Requires `prost` for protobuf serialization.
 
-2. **Video frame path:** FFmpeg decodes video to raw pixel buffers. These buffers are wrapped in `bytes::Bytes` (reference-counted). The pipeline borrows slices for quality analysis (image entropy, saturation) and passes the same `Bytes` to the encoder without copying. The encoder consumes the buffer.
+### Format 2: LeRobot v2 Reader
 
-3. **HDF5/Zarr numerical path:** HDF5 and Zarr readers produce owned `ndarray::Array` or `Vec<f32>` data. This is converted to Arrow `Float32Array` at the reader boundary (one copy, unavoidable due to HDF5 library semantics). From that point forward, the data is Arrow and participates in zero-copy.
+**On-disk structure:** Similar to v3 but with `codebase_version` of "v2.0" or "v2.1". Data stored as one Parquet file per episode (`data/chunk-XXX/episode_XXXXXX.parquet`). Videos in same structure as v3.
 
-### State Management
+**Data flow:**
+```
+meta/info.json (codebase_version "v2.*") --> parse InfoJson (reuse lerobot_v3 parser)
+    --> per-episode Parquet files --> Arrow RecordBatch
+    --> extract action, observation.state columns
+    --> video files --> LazyImage via forge-video decoder
+    --> Episode
+```
 
-- **No global mutable state.** All state is owned by the orchestrator structs (`Converter`, `Inspector`, `FilterEngine`) and threaded through function parameters.
-- **Reader state:** Readers may hold file handles or memory maps. They are `Send + Sync` so multiple rayon threads can call `read_episode()` concurrently. Internal synchronization (if needed for HDF5's non-thread-safe C library) uses `parking_lot::Mutex`.
-- **Writer state:** Writers are NOT shared across threads. A single writer lives on the writer thread. Episodes arrive via channel.
-- **Quality state:** Each `QualityAccumulator` is thread-local (one per episode being processed). No sharing needed.
+**Dependencies:** Same as lerobot_v3 (arrow, parquet, forge-video). Can share significant code with `lerobot_v3` module.
 
-## Scaling Considerations
+**Detection:** `meta/info.json` exists with `codebase_version` starting with "v2" or "2".
 
-| Scale | Architecture Adjustments |
-|-------|--------------------------|
-| 1-100 episodes | Sequential processing is fine. Rayon overhead is negligible but provides no benefit. |
-| 100-10K episodes | Rayon parallel processing provides 3-8x speedup depending on episode size and I/O bandwidth. Bounded channel prevents memory blowup. |
-| 10K-1M+ episodes | Need lazy episode enumeration (do not collect all IDs into a Vec). Use streaming directory iteration. Parquet writer should flush row groups periodically to bound memory. Consider sharding output into multiple Parquet files. |
+**Writer:** Produces v2-format output with per-episode Parquet files instead of v3's multi-episode chunks.
 
-### Scaling Priorities
+### Format 3: HDF5 Reader/Writer
 
-1. **First bottleneck: I/O bandwidth.** Conversion is fundamentally I/O-bound for large datasets. Prefetching (read-ahead of the next episode while the current one is being transformed) is the most impactful optimization. The bounded channel naturally enables this — rayon threads race ahead of the writer.
-2. **Second bottleneck: Video encoding.** H.264 encoding is CPU-intensive. FFmpeg uses its own thread pool internally. Avoid double-parallelism (rayon threads * FFmpeg threads > CPU cores). Set FFmpeg thread count to 1 when rayon parallelism is active, letting rayon handle the outer parallelism.
-3. **Third bottleneck: Parquet row group buffering.** Large episodes with many cameras generate large row groups. Flush row groups at configurable intervals (default: 10K rows) to bound memory.
+**On-disk structure:** Single `.hdf5` or `.h5` file with hierarchical groups. robomimic uses `/data/demo_0/obs/`, `/data/demo_0/actions/`. ACT/ALOHA uses similar structure. Each demo group contains datasets for observations, actions, rewards.
 
-## Anti-Patterns
+**Data flow:**
+```
+dataset.hdf5 --> hdf5 crate (HDF5 C library FFI)
+    --> iterate /data/demo_* groups (episodes)
+    --> per-episode: read /obs/image datasets --> LazyImage::from_bytes()
+    --> read /obs/joint_pos, /actions datasets --> LazyArray::from_vec()
+    --> Episode
+```
 
-### Anti-Pattern 1: Trait Objects for Format Dispatch
+**Dependencies:** `hdf5` crate (wraps hdf5-sys, requires system libhdf5). Gate behind `hdf5` feature flag in `forge-formats/Cargo.toml` because libhdf5 is a heavy system dependency.
 
-**What people do:** Use `Box<dyn FormatReader>` for polymorphic format handling.
-**Why it's wrong:** Adds vtable indirection on every method call in the hot loop. Prevents inlining. The format set is known at compile time — there is no runtime extensibility requirement.
-**Do this instead:** Use `enum_dispatch` to generate a match-based dispatch enum. This gives the compiler full visibility for optimization while maintaining ergonomic trait syntax.
+**Detection:** File extension `.hdf5` or `.h5`, confirmed by HDF5 magic bytes (`\x89HDF\r\n\x1a\n`).
 
-### Anti-Pattern 2: Collecting All Frames Before Writing
+**Writer:** Creates HDF5 file with robomimic-compatible group structure. Uses compound datasets for action/state arrays and image datasets for camera data.
 
-**What people do:** `let frames: Vec<Frame> = episode.frames().collect();` then pass the Vec to the writer.
-**Why it's wrong:** Materializes the entire episode in memory. A single episode with 10 cameras at 1080p can be 10+ GB of raw pixel data. The Python version already handles this with lazy loading — the Rust version must not regress.
-**Do this instead:** Stream frames through the pipeline. The writer consumes frames one-at-a-time (or in small batches for Parquet row groups). Video encoder accepts a frame iterator.
+**Thread safety:** The `hdf5` crate handles thread safety internally via reentrant mutex around non-thread-safe libhdf5 calls. Readers are `Send + Sync` as required.
 
-### Anti-Pattern 3: Shared Mutable Writer Across Threads
+### Format 4: Zarr Reader/Writer
 
-**What people do:** Wrap the writer in `Arc<Mutex<Writer>>` and share it across rayon threads.
-**Why it's wrong:** Serializes all writes behind a lock, eliminating the benefit of parallel reading/transforming. Mutex contention becomes the bottleneck.
-**Do this instead:** Use the channel-sink pattern. Rayon threads send completed episodes through a bounded channel to a dedicated writer thread. Parallelism happens in the read/transform phase; writes are naturally sequential.
+**On-disk structure:** `.zarr` directory with `zarr.json` (v3) or `.zarray`/`.zgroup` (v2) metadata files. Chunks stored as individual files. Diffusion Policy datasets use Zarr v2 with Blosc compression.
 
-### Anti-Pattern 4: Double Thread Pools (Rayon + FFmpeg)
+**Data flow:**
+```
+dataset.zarr/ --> zarrs crate (Zarr v2/v3 native Rust)
+    --> open ArrayStore --> read chunk data
+    --> decompress (Blosc, zlib, etc. handled by zarrs codecs)
+    --> reshape into episodes (using episode_ends array or episode_index)
+    --> per-episode arrays --> LazyArray::from_vec()
+    --> images from image arrays --> LazyImage::from_bytes()
+    --> Episode
+```
 
-**What people do:** Let rayon use all cores AND let FFmpeg use its default thread count per encode/decode instance.
-**Why it's wrong:** If rayon uses 8 threads and each FFmpeg instance uses 4, you have 32 threads fighting for 8 cores. Context switching kills performance.
-**Do this instead:** Set FFmpeg thread count to 1 when running under rayon parallelism. Rayon handles the outer parallelism (one episode per thread), FFmpeg handles single-threaded encode/decode within each episode. Total thread count equals rayon pool size.
+**Dependencies:** `zarrs` crate (pure Rust, supports v2 and v3, handles Blosc/zlib/zstd codecs internally).
 
-### Anti-Pattern 5: One Crate Per Format
+**Detection:** Directory contains `.zarr` extension or `zarr.json` (v3) or `.zgroup` (v2) at root.
 
-**What people do:** Create `forge-rlds`, `forge-lerobot`, `forge-hdf5`, etc. as separate workspace crates.
-**Why it's wrong:** The trait definitions (`FormatReader`, `FormatWriter`) and the enum-dispatch registry must live somewhere. Every format crate depends on the trait crate, and the registry crate depends on every format crate — creating a dependency fan-in/fan-out that slows compilation and complicates the workspace.
-**Do this instead:** Single `forge-formats` crate with internal modules per format. Feature flags can gate heavy dependencies (e.g., `hdf5` feature for `hdf5-rs`).
+**Writer:** Creates Zarr v2 directory (for compatibility with Python Zarr ecosystem) with Blosc compression.
 
-## Integration Points
+### Format 5: ROS Bag Reader/Writer
 
-### External Services
+**On-disk structure:** `.bag` files (ROS 1) or `.mcap` files (ROS 2). Contains timestamped messages on topics. Camera images typically on `/camera/image_raw`, joint states on `/joint_states`.
 
-| Service | Integration Pattern | Notes |
-|---------|---------------------|-------|
-| **FFmpeg** (system lib) | `ffmpeg-next` crate wrapping `ffmpeg-sys-next` | Requires FFmpeg 4.x+ installed. Build script links dynamically. Consider bundling static FFmpeg for release binaries. |
-| **HDF5** (system lib) | `hdf5` crate wrapping `hdf5-sys` | Thread safety via internal mutex (HDF5 C lib is not thread-safe). `hdf5` crate handles this. |
-| **HuggingFace Hub** | HTTP API via `reqwest` + custom auth | Token from `~/.cache/huggingface/token`. Download Parquet/MP4 files, upload via Hub API. |
-| **TFRecord/RLDS** | Pure Rust TFRecord parser | No TensorFlow dependency. Parse protobuf-encoded TFRecord files directly using `prost`. |
+**Data flow:**
+```
+ROS 1: file.bag --> rosbag crate (pure Rust .bag parser)
+    --> iterate chunk_records() --> filter by topic
+    --> deserialize sensor_msgs/Image --> LazyImage
+    --> deserialize sensor_msgs/JointState --> LazyArray
+    --> group by episode (time gaps or service calls)
 
-### Internal Boundaries
+ROS 2: file.mcap --> mcap crate (Foxglove official)
+    --> iterate messages --> filter by topic
+    --> CDR deserialize (Common Data Representation)
+    --> same topic-to-field mapping
+    --> Episode
+```
 
-| Boundary | Communication | Notes |
-|----------|---------------|-------|
-| `forge-core` <-> all crates | Shared types (`Episode`, `Frame`, `ForgeError`) | Core types are the "lingua franca". Changes here cascade everywhere — keep this stable. |
-| `forge-formats` <-> `forge-pipeline` | `FormatReader`/`FormatWriter` trait + `AnyReader`/`AnyWriter` enums | Pipeline only knows the trait interface. Format selection happens at config parse time. |
-| `forge-pipeline` <-> `forge-quality` | `QualityAccumulator` borrowed by pipeline per-episode | Quality crate exposes stateless accumulator. Pipeline owns the lifecycle. |
-| `forge-pipeline` <-> writer thread | `crossbeam_channel::bounded` | Bounded channel (8-32 slots) for backpressure. `WritableEpisode` is the message type. |
-| `forge-cli` <-> `forge-pipeline` | Direct function calls | CLI is a thin wrapper. No abstraction layer between CLI and pipeline. |
+**Dependencies:** `rosbag` (pure Rust ROS 1 parser), `mcap` (official Foxglove MCAP reader/writer).
 
-## Trait Design for Format Plugins
+**Detection:** File extension `.bag` (ROS 1) or `.mcap` (ROS 2), confirmed by magic bytes.
 
-### Core Traits
+**Writer:** Writes ROS 2 MCAP format only (modern standard). Uses `mcap` crate's write API.
+
+### Format 6: RoboDM Reader/Writer
+
+**On-disk structure:** `.vla` files using EBML (Extensible Binary Meta Language) container format, similar to MKV. Contains multiplexed video streams and action/state data.
+
+**Data flow:**
+```
+dataset.vla --> EBML parser (custom or ebml-iterable crate)
+    --> demux video tracks --> per-frame decode --> LazyImage
+    --> demux action/state tracks --> deserialize --> LazyArray
+    --> episode boundaries from EBML segment structure
+    --> Episode
+```
+
+**Dependencies:** `ebml-iterable` or custom EBML parser. RoboDM uses video codecs handled by FFmpeg via `forge-video`.
+
+**Detection:** File extension `.vla` or EBML magic bytes at file start (`\x1A\x45\xDF\xA3`).
+
+**Writer:** Creates `.vla` files with EBML structure, multiplexing video and data streams.
+
+### Format 7: GR00T Reader (Read-Only)
+
+**On-disk structure:** GR00T N1 datasets use LeRobot v2/v3 format internally. The format is essentially LeRobot with NVIDIA-specific metadata conventions and potentially different field naming.
+
+**Data flow:**
+```
+GR00T dataset --> detect as LeRobot-compatible
+    --> delegate to LeRobot v2/v3 reader with field name remapping
+    --> apply GR00T-specific metadata extraction
+    --> Episode
+```
+
+**Dependencies:** None beyond what LeRobot readers need. GR00T is a thin wrapper around LeRobot format.
+
+**Detection:** `meta/info.json` with GR00T-specific fields or directory structure conventions.
+
+**Writer:** Not planned (GR00T uses LeRobot format; write as LeRobot v3 instead).
+
+## Registry Evolution
+
+### Updated `detect_format()` Priority Order
+
+Detection must be ordered from most specific to least specific to avoid false positives:
 
 ```rust
-/// Reader trait — must be Send + Sync for rayon compatibility.
-pub trait FormatReader: Send + Sync {
-    /// Quick filesystem check: can this reader handle the given path?
-    fn can_read(&self, path: &Path) -> bool;
+pub fn detect_format(path: &Path) -> ForgeResult<&'static str> {
+    // 1. LeRobot v3 (most specific: meta/info.json with codebase_version v3.*)
+    if LeRobotV3Reader.can_read(path) { return Ok("lerobot-v3"); }
 
-    /// Read metadata without loading episode data.
-    fn inspect(&self, path: &Path) -> Result<DatasetInfo, ForgeError>;
+    // 2. GR00T (LeRobot-like but with GR00T-specific markers)
+    if GrootReader.can_read(path) { return Ok("groot"); }
 
-    /// List available episode IDs.
-    fn episode_ids(&self, path: &Path) -> Result<Vec<u64>, ForgeError>;
+    // 3. LeRobot v2 (meta/info.json with codebase_version v2.*)
+    if LeRobotV2Reader.can_read(path) { return Ok("lerobot-v2"); }
 
-    /// Read a single episode. Returns a lazy episode whose frames
-    /// are decoded on iteration.
-    fn read_episode(&self, path: &Path, episode_id: u64) -> Result<Episode, ForgeError>;
-}
+    // 4. RLDS (*.tfrecord files or dataset_info.json with RLDS schema)
+    if RldsReader.can_read(path) { return Ok("rlds"); }
 
-/// Writer trait — NOT Send + Sync. Lives on a single thread.
-pub trait FormatWriter {
-    /// Initialize writer state for an output path.
-    fn init(&mut self, path: &Path, info: &DatasetInfo) -> Result<(), ForgeError>;
+    // 5. HDF5 (*.hdf5, *.h5 files with specific group structure)
+    if Hdf5Reader.can_read(path) { return Ok("hdf5"); }
 
-    /// Write a single episode.
-    fn write_episode(&mut self, episode: &WritableEpisode) -> Result<(), ForgeError>;
+    // 6. Zarr (.zarr directory or zarr.json/zgroup markers)
+    if ZarrReader.can_read(path) { return Ok("zarr"); }
 
-    /// Flush metadata and close files.
-    fn finalize(&mut self) -> Result<(), ForgeError>;
-}
-```
+    // 7. RoboDM (*.vla files with EBML magic)
+    if RoboDmReader.can_read(path) { return Ok("robodm"); }
 
-**Key design decisions:**
-- `FormatReader` is `Send + Sync` because rayon threads call `read_episode()` concurrently
-- `FormatWriter` is NOT `Send + Sync` because it runs on a single dedicated thread (avoids locking)
-- `read_episode()` returns a lazy `Episode` — frames are decoded when iterated, not when the episode is loaded
-- `write_episode()` takes `&WritableEpisode` (pre-transformed, fully materialized per-episode batch) — the writer does not need to handle streaming frames
+    // 8. ROS bags (*.bag or *.mcap files)
+    if RosBagReader.can_read(path) { return Ok("rosbag"); }
 
-### Format Detection
-
-```rust
-pub fn detect_format(path: &Path) -> Result<FormatId, ForgeError> {
-    // Check each reader in priority order (most specific first).
-    // LeRobot v3 (metadata.json + data/*.parquet)
-    // LeRobot v2 (data/ + *.parquet, no metadata.json)
-    // RLDS (*.tfrecord)
-    // HDF5 (*.hdf5, *.h5)
-    // Zarr (.zarr directory)
-    // ROS bag (*.bag, *.mcap)
-    // RoboDM (specific directory structure)
-    for (format_id, reader) in READERS_BY_PRIORITY {
-        if reader.can_read(path) {
-            return Ok(format_id);
-        }
-    }
-    Err(ForgeError::FormatDetection { path: path.to_owned() })
+    Err(ForgeError::FormatDetection { path: path.to_path_buf() })
 }
 ```
 
-## Error Handling Strategy
+**Priority rationale:**
+- LeRobot v3 first because it is the primary target format and the most specific (requires `meta/info.json` with `codebase_version` starting with "v3")
+- GR00T before LeRobot v2 because GR00T datasets could be misdetected as v2
+- LeRobot v2 before RLDS because v2 has a specific info.json marker
+- RLDS before HDF5 because some RLDS datasets may contain HDF5-like files but have distinct `dataset_info.json`
+- HDF5 before Zarr because HDF5 detection is file-based (extension + magic bytes), not directory-based
+- RoboDM before ROS bags because `.vla` extension is more specific than `.bag`/`.mcap`
 
-**Use `thiserror` for all library crates. Use `anyhow` only at the CLI boundary.**
-
-This follows the Rust community consensus: library code should expose typed errors so callers can match on specific failure modes. Application code (the CLI binary) can erase types with `anyhow` for convenient propagation and display.
+### Updated `all_formats()`
 
 ```rust
-// forge-core/src/error.rs
-#[derive(Debug, thiserror::Error)]
-pub enum ForgeError {
-    #[error("format detection failed for path: {path}")]
-    FormatDetection { path: PathBuf },
-
-    #[error("episode {episode_id} not found in dataset at {path}")]
-    EpisodeNotFound { episode_id: u64, path: PathBuf },
-
-    #[error("schema validation failed: {errors:?}")]
-    SchemaValidation { errors: Vec<String> },
-
-    #[error("conversion failed ({source_format} -> {target_format}): {reason}")]
-    Conversion {
-        source_format: String,
-        target_format: String,
-        reason: String,
-    },
-
-    #[error("video error: {0}")]
-    Video(#[from] VideoError),
-
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-
-    #[error("Arrow error: {0}")]
-    Arrow(#[from] arrow::error::ArrowError),
-
-    #[error("Parquet error: {0}")]
-    Parquet(#[from] parquet::errors::ParquetError),
-
-    #[error("pipeline closed unexpectedly")]
-    PipelineClosed,
-}
-
-// forge-video/src/error.rs
-#[derive(Debug, thiserror::Error)]
-pub enum VideoError {
-    #[error("FFmpeg decode error: {0}")]
-    Decode(String),
-
-    #[error("FFmpeg encode error: {0}")]
-    Encode(String),
-
-    #[error("unsupported codec: {0}")]
-    UnsupportedCodec(String),
+pub fn all_formats() -> &'static [FormatCapability] {
+    static FORMATS: &[FormatCapability] = &[
+        FormatCapability { name: "lerobot-v3", can_read: true,  can_write: true,  description: "LeRobot v3 (Parquet + MP4 video)" },
+        FormatCapability { name: "lerobot-v2", can_read: true,  can_write: true,  description: "LeRobot v2 (per-episode Parquet + MP4)" },
+        FormatCapability { name: "rlds",       can_read: true,  can_write: true,  description: "RLDS/TFRecord (Open-X Embodiment)" },
+        FormatCapability { name: "hdf5",       can_read: true,  can_write: true,  description: "HDF5 (robomimic, ACT/ALOHA)" },
+        FormatCapability { name: "zarr",       can_read: true,  can_write: true,  description: "Zarr (Diffusion Policy, UMI)" },
+        FormatCapability { name: "rosbag",     can_read: true,  can_write: true,  description: "ROS bags (ROS 1 .bag, ROS 2 MCAP)" },
+        FormatCapability { name: "robodm",     can_read: true,  can_write: true,  description: "RoboDM (Berkeley .vla EBML)" },
+        FormatCapability { name: "groot",      can_read: true,  can_write: false, description: "GR00T N1 (NVIDIA Isaac, LeRobot-based)" },
+    ];
+    FORMATS
 }
 ```
 
-At the CLI boundary:
+## New Component Placement
+
+### Where Hub Integration Lives: `forge-hub` (new crate)
+
+```
+crates/forge-hub/
+    Cargo.toml          # reqwest, hf-hub, tokio, forge-core
+    src/
+        lib.rs          # pub mod download, upload, cache, auth
+        auth.rs         # Token from ~/.cache/huggingface/token or HF_TOKEN env
+        cache.rs        # Local cache management, skip re-downloads
+        download.rs     # HubDownloader: repo -> local path
+        upload.rs       # HubUploader: local path -> repo (Git LFS)
+        client.rs       # Shared HTTP client, retry logic
+```
+
+**Key design:** Download produces a local directory path that can be passed directly to `forge-formats` readers. Upload takes a local directory (output of a writer) and pushes it.
 
 ```rust
-// forge-cli/src/main.rs
-fn main() {
-    let cli = Cli::parse();
-    if let Err(e) = run(cli) {
-        // anyhow provides the full error chain for display.
-        eprintln!("Error: {e:#}");
-        std::process::exit(1);
+// forge-hub/src/download.rs
+pub struct HubDownloader {
+    client: hf_hub::api::sync::Api,  // or async variant
+    cache_dir: PathBuf,
+}
+
+impl HubDownloader {
+    pub fn download(&self, repo_id: &str) -> ForgeResult<PathBuf> {
+        // Returns path to local cached dataset
+        // Skips files already present
     }
 }
 ```
 
-## Build Order (Dependency Chain)
-
-The crate dependency graph determines the build order and, critically, the implementation order for the project:
+### Where Visualization Lives: `forge-viz` (new crate)
 
 ```
-forge-core          (0 internal deps — build first)
-    │
-    ├──→ forge-video        (depends on forge-core)
-    │
-    ├──→ forge-quality      (depends on forge-core)
-    │
-    └──→ forge-formats      (depends on forge-core, forge-video)
-              │
-              └──→ forge-pipeline   (depends on forge-core, forge-formats, forge-quality)
-                        │
-                        └──→ forge-cli      (depends on forge-pipeline)
+crates/forge-viz/
+    Cargo.toml          # ratatui, ratatui-image, crossterm, forge-core, forge-formats
+    src/
+        lib.rs          # pub mod viewer, export_video, stats
+        viewer.rs       # InteractiveViewer: TUI dataset browser
+        export_video.rs # Render episodes as standalone MP4
+        stats.rs        # Compute and display per-field distributions
+        widgets/
+            mod.rs
+            episode_list.rs     # Scrollable episode selector
+            frame_display.rs    # Camera image + overlay
+            timeseries.rs       # Action/state line charts
 ```
 
-**Build order implications for project phases:**
+### Where YAML Config Enrichments Live: `forge-core/src/config.rs`
 
-1. **Phase 1: forge-core** — Define `Episode`, `Frame`, `DatasetInfo`, `ForgeError`, `ConversionConfig`. This is the contract everything else depends on. Get this right first; changes here are expensive later.
+The existing `ConversionConfig` already supports YAML deserialization and has `fields`, `cameras`, `fps`, `robot_type` fields. For v2.0, enrich it with:
 
-2. **Phase 2: forge-video** — FFmpeg FFI wrapper for video decode/encode. Build this early because it has the most complex build requirements (system FFmpeg dependency, FFI safety). Proving this works de-risks the entire video pipeline.
+```rust
+// Additions to ConversionConfig
+pub struct ConversionConfig {
+    // ... existing fields ...
 
-3. **Phase 3: forge-formats (first reader + writer)** — Implement the `FormatReader`/`FormatWriter` traits and one complete reader-writer pair (LeRobot v3, since it is the primary target format and exercises both Parquet and video). This validates the trait design end-to-end.
+    /// Hub repository ID for download (e.g., "lerobot/aloha_sim_insertion_human")
+    pub hub_repo: Option<String>,
 
-4. **Phase 4: forge-pipeline** — Wire up the converter with rayon parallelism, the channel-sink writer pattern, and the streaming architecture. At this point you can convert LeRobot v3 to LeRobot v3 (identity conversion) and benchmark against the Python version.
+    /// Quality analysis thresholds for inline filtering during convert
+    pub quality_thresholds: Option<QualityThresholds>,
 
-5. **Phase 5: forge-quality** — Streaming quality analysis. Can develop in parallel with additional format readers since it depends only on forge-core.
+    /// Per-format reader options (e.g., HDF5 group path, Zarr array names)
+    pub reader_options: HashMap<String, serde_json::Value>,
 
-6. **Phase 6: forge-formats (remaining readers/writers)** — RLDS, HDF5, Zarr, ROS bag, RoboDM. Each is independent — can be parallelized across developers or done incrementally.
+    /// Per-format writer options (e.g., compression level, chunk size)
+    pub writer_options: HashMap<String, serde_json::Value>,
+}
+```
 
-7. **Phase 7: forge-cli** — Final binary with all commands. The thin CLI layer goes last because it depends on everything else and changes most frequently during development.
+The `reader_options`/`writer_options` maps allow format-specific configuration without polluting the core config struct with format-specific fields.
+
+### forge-cli Command Structure
+
+```
+crates/forge-cli/src/
+    main.rs             # Cli struct + Commands enum + dispatch
+    commands/
+        mod.rs
+        version.rs      # forge version (existing, extracted)
+        formats.rs      # forge formats (existing, extracted)
+        convert.rs      # forge convert (existing, extracted)
+        inspect.rs      # forge inspect (NEW)
+        quality.rs      # forge quality (NEW)
+        filter.rs       # forge filter (NEW)
+        hub.rs          # forge hub download/upload (NEW)
+        stats.rs        # forge stats (NEW)
+        export_video.rs # forge export-video (NEW)
+        visualize.rs    # forge visualize (NEW)
+```
+
+This is a refactor of the current monolithic `main.rs` (197 lines) into a module tree. Each command module owns its clap argument struct and dispatch function.
+
+## forge-formats Module Layout After v2.0
+
+```
+crates/forge-formats/src/
+    lib.rs              # Module declarations, re-exports
+    traits.rs           # FormatReader, FormatWriter (UNCHANGED)
+    registry.rs         # all_formats(), detect_format(), get_reader(), get_writer() (ENRICHED)
+    tests.rs            # Integration tests
+    lerobot_v3/         # (EXISTING)
+        mod.rs
+        info.rs
+        parquet_io.rs
+        reader.rs
+        writer.rs
+    lerobot_v2/         # (NEW)
+        mod.rs
+        reader.rs
+        writer.rs       # Per-episode Parquet output
+    rlds/               # (NEW)
+        mod.rs
+        reader.rs
+        writer.rs
+        tfrecord_io.rs  # TFRecord binary format helpers
+        proto.rs        # Compiled protobuf types (tf.train.Example)
+    hdf5/               # (NEW, feature-gated)
+        mod.rs
+        reader.rs
+        writer.rs
+        group_layout.rs # robomimic vs ACT group structure detection
+    zarr/               # (NEW)
+        mod.rs
+        reader.rs
+        writer.rs
+    rosbag/             # (NEW, feature-gated)
+        mod.rs
+        reader.rs       # Dispatches to ros1.rs or ros2.rs based on file type
+        writer.rs       # ROS 2 MCAP only
+        ros1.rs         # ROS 1 .bag parsing via rosbag crate
+        ros2.rs         # ROS 2 MCAP via mcap crate
+        msg_types.rs    # sensor_msgs/Image, JointState deserialization
+    robodm/             # (NEW)
+        mod.rs
+        reader.rs
+        writer.rs
+        ebml.rs         # EBML container parsing
+    groot/              # (NEW, reader only)
+        mod.rs
+        reader.rs       # Thin wrapper delegating to LeRobot reader
+```
+
+## Feature Flags on forge-formats
+
+```toml
+# crates/forge-formats/Cargo.toml
+[features]
+default = ["all-formats"]
+all-formats = ["hdf5", "zarr", "rlds", "ros"]
+hdf5 = ["dep:hdf5"]
+zarr = ["dep:zarrs"]
+rlds = ["dep:tfrecord", "dep:prost"]
+ros = ["dep:rosbag", "dep:mcap"]
+
+[dependencies]
+# Always available (pure Rust, no system deps)
+forge-core.workspace = true
+forge-video.workspace = true
+bytes.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+arrow.workspace = true
+parquet.workspace = true
+
+# Feature-gated
+hdf5 = { version = "0.8", optional = true }
+zarrs = { version = "0.19", optional = true }
+tfrecord = { version = "0.4", optional = true }
+prost = { version = "0.13", optional = true }
+rosbag = { version = "0.6", optional = true }
+mcap = { version = "0.24", optional = true }
+```
+
+**Rationale for feature flags:**
+- `hdf5` requires system libhdf5 (C library) -- CI and users without it should still compile
+- `rosbag` may have platform-specific issues
+- `rlds` pulls in protobuf compilation machinery
+- `zarrs` is pure Rust but heavy; gating is optional but follows the pattern
+- Default `all-formats` means `cargo build` includes everything; `--no-default-features` strips to core
+
+## Data Flow Changes from v1.0
+
+### No Changes to Core Pipeline Flow
+
+The fundamental flow is unchanged:
+
+```
+detect_format(source) -> get_reader(fmt) -> reader.read_episodes(source)
+    -> [parallel: remap fields/cameras] -> get_writer(target) -> writer.write_episode()
+    -> writer.finalize()
+```
+
+New formats plug into this flow transparently. The `Converter` in `forge-pipeline/src/convert.rs` does not need format-specific code.
+
+### New Flow: Hub Download -> Convert
+
+```
+forge hub download <repo> --> forge-hub downloads to cache dir
+    --> returns local_path
+forge convert <local_path> <output> --> existing pipeline
+```
+
+Or combined in CLI:
+```
+forge convert --hub-repo lerobot/aloha_sim <output> --target-format hdf5
+    --> forge-hub downloads to cache
+    --> forge-pipeline converts from cache path
+```
+
+### New Flow: Visualization
+
+```
+forge visualize <path>
+    --> detect_format(path) --> get_reader(fmt)
+    --> reader.inspect(path) --> DatasetInfo for episode list
+    --> interactive TUI: select episode --> reader.read_episodes() for single episode
+    --> display frames in terminal (ratatui-image)
+    --> display action/state timeseries (ratatui line chart)
+```
+
+### New Flow: Stats
+
+```
+forge stats <path>
+    --> reader.read_episodes(path)
+    --> streaming accumulator per field: min, max, mean, std, histogram
+    --> output table to terminal or JSON
+```
+
+## Modifications to Existing Crates
+
+### forge-core Modifications
+
+| File | Change | Reason |
+|------|--------|--------|
+| `config.rs` | Add `hub_repo`, `quality_thresholds`, `reader_options`, `writer_options` fields | YAML config needs Hub and per-format options |
+| `error.rs` | Add `Hub { repo: String, reason: String }`, `Visualization(String)` variants | New error sources from new crates |
+| `schema.rs` | No changes | DatasetInfo is already generic enough |
+| `episode.rs` | No changes | Episode/Frame model handles all formats |
+
+### forge-formats Modifications
+
+| File | Change | Reason |
+|------|--------|--------|
+| `lib.rs` | Add 7 `pub mod` declarations | New format modules |
+| `registry.rs` | Expand `all_formats()`, `detect_format()`, `get_reader()`, `get_writer()` | Register new formats |
+| `traits.rs` | No changes | Traits are stable |
+| `Cargo.toml` | Add feature-gated dependencies | New format libraries |
+
+### forge-pipeline Modifications
+
+| File | Change | Reason |
+|------|--------|--------|
+| `lib.rs` | Add `pub mod inspect`, `pub mod stats` | New pipeline operations |
+| `convert.rs` | Wire `reader_options`/`writer_options` from config to readers/writers | Per-format config |
+| New: `inspect.rs` | Inspector struct for `forge inspect` | Dataset inspection pipeline |
+| New: `stats.rs` | StatsAccumulator for `forge stats` | Per-field statistics |
+
+### forge-cli Modifications
+
+| File | Change | Reason |
+|------|--------|--------|
+| `main.rs` | Refactor to `commands/` module tree, add 7+ subcommands | CLI expansion |
+| `Cargo.toml` | Add `forge-hub`, `forge-viz` dependencies | New features |
+
+## Build Order Recommendation for Phases 5-8
+
+### Phase 5: Format Readers (build order matters within phase)
+
+Build readers in this order due to decreasing code reuse and increasing dependency complexity:
+
+1. **LeRobot v2** -- Shares 70%+ code with existing LeRobot v3. Validates the "add a new format" workflow. Low risk.
+2. **GR00T** -- Thin wrapper around LeRobot reader. Quick win after v2 is done.
+3. **RLDS/TFRecord** -- Pure Rust dependencies (tfrecord + prost). No system library needed. Moderate complexity.
+4. **HDF5** -- System library dependency (libhdf5). Higher build complexity. Feature-gated.
+5. **Zarr** -- Pure Rust (zarrs). Moderate complexity but well-documented library.
+6. **RoboDM** -- EBML parsing is custom work. Least common format. Build last.
+7. **ROS bags** -- Two sub-formats (ROS 1 + ROS 2 MCAP). Feature-gated. Build alongside or after RoboDM.
+
+Batch suggestion: Plans 05-01 (LeRobot v2 + GR00T + registry), 05-02 (RLDS + Zarr), 05-03 (HDF5 + ROS bags + RoboDM).
+
+### Phase 6: Format Writers
+
+Build writers in this order:
+
+1. **LeRobot v2** -- Shares code with v3 writer. Validates write-path patterns.
+2. **RLDS** -- TFRecord writing is well-defined binary format.
+3. **HDF5** -- Leverages reader's HDF5 binding. Symmetric to reader.
+4. **Zarr** -- zarrs crate supports writing natively.
+5. **ROS bags (MCAP)** -- mcap crate supports writing. ROS 2 MCAP only.
+6. **RoboDM** -- EBML writing is the most custom work.
+
+**Round-trip tests** should be written alongside each writer: format A -> LeRobot v3 -> format A, verify data integrity.
+
+Batch suggestion: Plans 06-01 (LeRobot v2 + RLDS writers + round-trip tests), 06-02 (HDF5 + Zarr + ROS + RoboDM writers + round-trip tests).
+
+### Phase 7: CLI, Config, Hub Download
+
+Dependencies: Phases 5 + 6 (all formats must be readable/writable for CLI to exercise them).
+
+1. **CLI refactor** -- Extract existing commands to `commands/` module tree. Add `inspect`, `quality`, `filter`, `stats` subcommands that wire to existing pipeline code.
+2. **YAML config enrichment** -- Add `reader_options`, `writer_options`, `hub_repo` to ConversionConfig. Implement `forge inspect --generate-config`.
+3. **Hub download** -- Build `forge-hub` crate. Implement `forge hub download <repo>`.
+4. **Shell completions** -- clap generates these via `build.rs`.
+
+Batch suggestion: Plans 07-01 (CLI refactor + inspect/quality/filter/stats), 07-02 (YAML config + generate-config), 07-03 (forge-hub download + shell completions).
+
+### Phase 8: Hub Upload, Visualization, Distribution
+
+Dependencies: Phase 7 (CLI complete, Hub download working).
+
+1. **Hub upload** -- Extend `forge-hub` with upload capability. Git LFS handling.
+2. **Visualization** -- Build `forge-viz` crate. Implement `forge visualize` TUI.
+3. **Video export + stats** -- `forge export-video`, `forge stats` commands.
+4. **Cross-platform releases** -- GitHub Actions workflow: Linux x86_64/aarch64, macOS x86_64/aarch64, Windows x86_64.
+
+Batch suggestion: Plans 08-01 (Hub upload + video export + stats), 08-02 (visualization TUI + cross-platform releases).
+
+## Anti-Patterns to Avoid
+
+### Anti-Pattern 1: Format-Specific Code in forge-pipeline
+
+**Temptation:** Add HDF5-specific chunking logic or RLDS-specific episode grouping in the pipeline.
+**Why wrong:** Breaks the abstraction boundary. The pipeline should only know about `FormatReader`/`FormatWriter` traits and `Episode`.
+**Instead:** All format-specific logic lives inside the format module. The reader produces standard `Episode`s; the pipeline is format-agnostic.
+
+### Anti-Pattern 2: Blocking Async in Sync Pipeline
+
+**Temptation:** Call Hub download functions (async) directly from the sync conversion pipeline.
+**Why wrong:** Mixing async/sync creates runtime panics or blocks the rayon thread pool.
+**Instead:** Hub download completes before the pipeline starts. The CLI dispatches: download first (async with tokio runtime), then convert (sync with rayon). Two distinct phases, never mixed.
+
+### Anti-Pattern 3: Shared HDF5 File Handle Across Threads
+
+**Temptation:** Open HDF5 file once and share across rayon threads.
+**Why wrong:** libhdf5 is not thread-safe. The `hdf5` crate's internal mutex serializes access, defeating parallelism.
+**Instead:** Open the HDF5 file once to enumerate episodes (sequential inspect), then each rayon thread opens its own file handle for reading its assigned episode. Multiple read-only handles to the same HDF5 file work with the thread-safe hdf5 crate.
+
+### Anti-Pattern 4: Lazy Loading for Non-Lazy Formats
+
+**Temptation:** Force LazyImage/LazyArray patterns on formats that naturally produce eager data (HDF5, Zarr).
+**Why wrong:** HDF5 and Zarr read operations are already well-buffered by their respective libraries. Adding a lazy wrapper on top of an eager read adds complexity without benefit.
+**Instead:** Use `LazyArray::from_vec()` and `LazyImage::from_bytes()` (already-loaded constructors) for formats that produce owned data. The lazy wrapper is only valuable when deferring expensive I/O (video decode, Parquet column reads).
+
+## Scalability Considerations
+
+| Concern | Current (v1.0) | After v2.0 | Notes |
+|---------|----------------|------------|-------|
+| Format count | 1 reader, 1 writer | 8 readers, 7 writers | Linear scaling in registry match arms |
+| Compile time | ~30s clean build | ~60-90s with all features | Feature flags mitigate; `--no-default-features` for fast iteration |
+| Binary size | ~15MB | ~25-35MB | HDF5 and ROS deps add bulk; strip + LTO reduce |
+| CLI complexity | 3 subcommands | 10+ subcommands | `commands/` module tree keeps main.rs clean |
+| Test count | 134 | 300+ (estimated) | Per-format round-trip tests, integration tests |
 
 ## Sources
 
-- [Rust Design Patterns (unofficial)](https://rust-unofficial.github.io/patterns/)
-- [Trait Objects — The Rust Programming Language](https://doc.rust-lang.org/book/ch18-02-trait-objects.html)
-- [enum_dispatch crate](https://docs.rs/enum_dispatch) — 10x faster dispatch vs trait objects
-- [rayon: Data parallelism library](https://github.com/rayon-rs/rayon)
-- [ParallelIterator trait](https://docs.rs/rayon/latest/rayon/iter/trait.ParallelIterator.html)
-- [Data Parallelism — Rust Cookbook](https://rust-lang-nursery.github.io/rust-cookbook/concurrency/parallel.html)
-- [ffmpeg-sys-next crate](https://lib.rs/crates/ffmpeg-sys-next) — FFmpeg FFI bindings
-- [hdf5 crate](https://docs.rs/hdf5) — Thread-safe HDF5 bindings (reentrant mutex for non-threadsafe libhdf5)
-- [Apache Arrow Rust (arrow-rs)](https://github.com/apache/arrow-rs) — ArrowWriter for streaming Parquet
-- [ArrowWriter API](https://arrow.apache.org/rust/parquet/arrow/arrow_writer/struct.ArrowWriter.html)
-- [Rust Error Handling: thiserror vs anyhow](https://momori.dev/posts/rust-error-handling-thiserror-anyhow/)
-- [Error Handling for Large Rust Projects](https://medium.com/@greptime/error-handling-for-large-rust-projects-a-deep-dive-into-5e10ee4cbc96)
-- [Cargo Workspaces — The Rust Programming Language](https://doc.rust-lang.org/book/ch14-03-cargo-workspaces.html)
-- [Enum vs Trait Object dispatch benchmark](https://github.com/Britefury/rust-enum-vs-trait-benchmark)
-- [The state of SIMD in Rust in 2025](https://shnatsel.medium.com/the-state-of-simd-in-rust-in-2025-32c263e5f53d)
-- [clap derive tutorial](https://docs.rs/clap/latest/clap/_derive/_tutorial/index.html)
+- Direct codebase analysis of 6-crate workspace (HIGH confidence)
+- [hdf5 crate](https://docs.rs/crate/hdf5/latest) -- HDF5 Rust bindings with thread-safe mutex
+- [zarrs crate](https://docs.rs/zarrs/latest/zarrs/) -- Zarr v2/v3 for Rust
+- [tfrecord crate](https://docs.rs/tfrecord/) -- TFRecord parser for Rust
+- [mcap crate](https://docs.rs/mcap/) -- MCAP file format reader/writer
+- [rosbag crate](https://docs.rs/rosbag/latest/rosbag/) -- Pure Rust ROS 1 bag reader
+- [hf-hub crate](https://github.com/huggingface/hf-hub) -- Official HuggingFace Rust client
+- [ratatui](https://ratatui.rs/) -- Terminal TUI framework
+- [ratatui-image](https://lib.rs/crates/ratatui-image) -- Image rendering in terminal
+- [RLDS GitHub](https://github.com/google-research/rlds) -- RLDS format specification
+- [RoboDM paper](https://arxiv.org/html/2505.15558v1) -- EBML-based robotics data format
+- [GR00T N1 data preparation](https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/data_preparation.md) -- GR00T uses LeRobot format
+- [LeRobot Dataset v3](https://huggingface.co/docs/lerobot/en/lerobot-dataset-v3) -- v3 format specification
 
 ---
-*Architecture research for: Forge Rust robotics dataset converter*
+*Architecture research for: Forge Rust v2.0 Format Breadth & Distribution*
 *Researched: 2026-02-21*

@@ -1,218 +1,238 @@
 # Project Research Summary
 
-**Project:** Forge Rust Rewrite
-**Domain:** High-performance Rust CLI for robotics dataset format conversion
+**Project:** Forge Rust Rewrite — v2.0 Format Breadth & Distribution
+**Domain:** Robotics dataset format conversion CLI (Rust, cross-platform, HuggingFace Hub integration)
 **Researched:** 2026-02-21
-**Confidence:** MEDIUM-HIGH
+**Confidence:** HIGH
 
 ## Executive Summary
 
-Forge is a robotics dataset format converter being rewritten from Python to Rust. The Python version already supports 8 input formats, quality analysis with 8 metrics, and HuggingFace Hub integration. The Rust rewrite targets 5-15x performance through zero-copy data pipelines, true thread parallelism (no GIL), SIMD-accelerated quality metrics, and distribution as a single static binary. The core stack is battle-tested: `arrow-rs` for Parquet, `rayon` for parallelism, `clap` for CLI, `ndarray` for numerics. The riskier dependencies are format-specific FFI crates (`ffmpeg-next` for video, `hdf5-metno` for HDF5) and the absence of a Rust HuggingFace Hub SDK for uploads.
+Forge v2.0 expands a validated Rust robotics dataset converter from 1 format to 8 bidirectional formats, adds HuggingFace Hub upload/download, terminal visualization, and cross-platform binary distribution. The v1.0 codebase (6-crate workspace with `FormatReader`/`FormatWriter` traits, registry, Episode model, rayon pipeline, 134 tests, 9,974 LOC) is well-designed for this expansion: each new format requires only one module directory and 4 touch points in `registry.rs`, with no changes to core types or the pipeline. The recommended strategy is to add formats in increasing dependency complexity order — LeRobot v2/GR00T first (zero new deps, 70% code reuse from v3) to validate the pattern, then pure-Rust formats (RLDS/TFRecord, Zarr), then C-FFI formats (HDF5, ROS bags), then RoboDM (custom EBML). Two new crates (`forge-hub` for async Hub I/O and `forge-viz` for TUI) isolate heavyweight dependencies from the synchronous conversion core.
 
-The recommended approach is a workspace of 6 crates (`forge-core`, `forge-video`, `forge-formats`, `forge-quality`, `forge-pipeline`, `forge-cli`) using enum dispatch for format plugins and a channel-sink pattern for parallel read / sequential write. The architecture centers on a streaming episode pipeline where rayon worker threads read and transform episodes in parallel, sending completed episodes through a bounded channel to a single writer thread. This avoids shared mutable state, provides natural backpressure, and enables zero-copy data flow from readers through to writers.
+The dominant risk is the intersection of three C library dependencies (FFmpeg, libhdf5, C-Blosc) with cross-platform distribution requirements. The research conclusion is unambiguous: do NOT attempt fully static binaries; instead, gate HDF5 and Blosc/Zarr behind Cargo feature flags so a zero-C-dependency binary variant exists for testing and for users who only need pure-Rust formats. A second high-risk area is HuggingFace Hub upload — no Rust SDK supports upload, requiring ~400 lines of custom LFS REST client code against an API that is actively migrating from Git LFS to Xet storage (default for new HF repos since May 2025). Implement LFS-based upload first and treat Xet as a future enhancement. A third structural pitfall must be addressed immediately in Phase 5: the `detect_format()` registry function must be refactored from boolean first-match to confidence-scored detection before the second format is added, or format ambiguity (GR00T vs LeRobot v2) will cause silent mis-conversions at scale.
 
-The three highest-risk areas are: (1) Arrow/Parquet schema compatibility with Python PyArrow -- `arrow-rs` and `pyarrow` produce subtly different schemas that can break LeRobot's Python training stack; (2) FFmpeg cross-platform linking -- the binary must compile and link against system FFmpeg on Linux, macOS, and Windows with different FFmpeg versions; (3) TFRecord/RLDS parsing without TensorFlow -- the Rust ecosystem lacks a mature RLDS-aware library, requiring vendored proto definitions and custom parsing. All three risks are manageable with early validation: golden-file schema tests, CI matrix builds, and protobuf-based RLDS prototyping.
+The feature scope is deliberately calibrated against competitors: Python Forge reads 8 formats but writes only 3, while the Rust rewrite targets full bidirectionality (7 writable formats), native Hub integration without a Python dependency, and a terminal TUI that works over SSH where matplotlib/OpenCV fail. The core competitive advantage — a single binary under 50MB vs Python Forge's 3GB+ TF+h5py stack — must be protected by disciplined Cargo feature gating throughout v2.0 development.
 
 ## Key Findings
 
 ### Recommended Stack
 
-The core stack carries HIGH confidence. Rust 1.85+, `clap` 4.5, `rayon` 1.11, `arrow-rs` 54-58, `tokio` 1.43+ (async I/O for Hub downloads only), and `serde` 1.x are all production-grade with tens to hundreds of millions of downloads. Format-specific libraries carry MEDIUM confidence: `hdf5-metno` 0.11 (community fork of abandoned crate), `zarrs` 0.22 (pure Rust, Zarr v3-focused), `tfrecord` 0.14 (single maintainer), `ffmpeg-next` 8.0 (FFI to system FFmpeg). See [STACK.md](./STACK.md) for full version matrix and alternatives.
+The existing stack (clap, rayon, arrow-rs v54, parquet v54, ffmpeg-next v8, pulp 0.22, serde, serde_yaml_ng, indicatif, crossbeam-channel, bytes) is unchanged. All v2.0 stack additions are scoped to new features and gated via Cargo features. The full set of new workspace dependencies is:
 
-**Core technologies:**
-- **arrow-rs (arrow + parquet):** Zero-copy Arrow buffers, native Parquet read/write with Snappy/Zstd -- the backbone of the LeRobot v3 format
-- **rayon:** Work-stealing thread pool for episode-level parallelism -- no serialization overhead unlike Python's ProcessPoolExecutor
-- **ffmpeg-next:** FFmpeg bindings for H.264 video encode/decode -- required for LeRobot v3 MP4 video files
-- **ndarray + pulp:** N-dimensional arrays with portable SIMD for quality metrics hot paths (smoothness, entropy, saturation)
-- **clap + indicatif + ratatui:** CLI framework, progress bars, and terminal visualization
-- **reqwest + tokio:** Async HTTP for HuggingFace Hub download/upload (no official Rust Hub SDK exists)
+**Core new technologies:**
+- `hf-hub 0.5` + `reqwest 0.13` + `tokio 1.43`: Hub download (hf-hub) and upload (custom reqwest REST client) — hf-hub is the only official Rust HF client but is download-only; upload must be hand-implemented via HF REST API
+- `tfrecord 0.15` + `prost 0.12` + `prost-build 0.12`: RLDS/TFRecord read/write — pure Rust, no TensorFlow runtime; vendor exactly 4 proto files (example.proto, feature.proto + 2 deps) and avoid compiling all 1000+ TF protos
+- `hdf5-metno 0.10` (aliased as `hdf5`): HDF5 read/write — use the actively maintained metno fork, not the abandoned aldanor crate; requires system libhdf5; gated behind Cargo feature; thread safety requires sequential (not rayon-parallel) HDF5 reads
+- `zarrs 0.23` (features: blosc, ndarray): Zarr V2/V3 read/write — pure Rust, Blosc codec is default-on; V2 support must be validated against real Diffusion Policy datasets before full commitment
+- `rosbag 0.6` + `mcap 0.24`: ROS 1 bag reading and ROS 2 MCAP read/write — three ROS bag sub-formats require separate Rust crates; only write MCAP (ROS 2, modern standard); ROS 1 .bag writing is an anti-feature
+- `ratatui 0.30` + `crossterm 0.29` + `ratatui-image`: Terminal TUI — the Rust TUI standard, cross-platform; optional `visualization` feature flag
+- `cross` (cross-rs) + `actions-rust-cross`: Cross-compilation for Linux aarch64 (Jetson Orin target) from x86_64 CI runners
 
-**Critical version constraints:**
-- `arrow` and `parquet` crates must be the same version (shared release cycle)
-- `ffmpeg-next` requires system FFmpeg 6.x/7.x/8.x installed
-- `hdf5-metno` requires system HDF5 1.8.4+ (or build from source via `hdf5-metno-src`)
-
-**What NOT to use:** `polars` (too high-level, hides Arrow control), `std::simd` (nightly-only), `PyO3` (defeats purpose of rewrite), `serde_yaml` (deprecated), `serde_yml` (unsound, RUSTSEC-2025-0068), `tensorflow` Rust bindings (enormous dependency).
+**Critical version constraints to verify before Phase 5:**
+- tfrecord 0.15 pins prost 0.12 internally — use prost 0.12 everywhere to avoid duplicate protobuf runtimes
+- hf-hub 0.5 may depend on reqwest 0.12 — verify with `cargo tree -d` and use whatever reqwest version hf-hub requires
 
 ### Expected Features
 
-The v1 feature set must reach parity with Python Forge before users will adopt. See [FEATURES.md](./FEATURES.md) for full prioritization matrix and dependency graph.
+**Must have — table stakes (P1, v2.0 core):**
+- 7 new format readers: RLDS/TFRecord, LeRobot v2, HDF5 (robomimic + ACT/ALOHA), Zarr (Diffusion Policy/UMI), ROS bag (ROS 1 .bag + ROS 2 MCAP), RoboDM (.vla EBML), GR00T (NVIDIA Isaac, thin LeRobot v2 wrapper)
+- Format auto-detection for all 8 formats using confidence-scored detection (not boolean first-match)
+- 5 new format writers: RLDS, HDF5, Zarr, MCAP, LeRobot v2 — enabling full bidirectional conversion
+- `forge inspect` — auto-detect format and display schema, episode/frame counts, FPS, robot type
+- `forge hub download` — HuggingFace Hub download with caching and auth (HF_TOKEN or ~/.huggingface/token)
+- YAML conversion config with `reader_options`/`writer_options` and `--generate-config` auto-generation
 
-**Must have (table stakes -- P1):**
-- 8 format readers (RLDS, LeRobot v2/v3, HDF5, Zarr, ROS bags, RoboDM, GR00T)
-- LeRobot v3 + RLDS writers (covers 90%+ of conversion targets)
-- Format auto-detection, dataset inspection, YAML config with field/camera remapping
-- Video encoding (H.264 MP4 for LeRobot v3)
-- Parallel episode processing via rayon
-- Quality analysis (all 8 metrics), episode filtering by quality
-- HuggingFace Hub download
-- CLI with all subcommands, progress reporting, error handling with continuation
+**Should have — competitive differentiators (P2, v2.0 enhanced):**
+- `forge hub upload` — upload to Hub via LFS REST API (~400 lines custom implementation)
+- `forge stats` — per-field min/max/mean/std, episode length distribution
+- `forge export-video` — export episode cameras as standalone MP4 files
+- `forge visualize` — ratatui TUI episode browser with keyboard scrubbing and sixel image display
+- RoboDM writer — EBML + FFmpeg, highest-complexity writer, low user value relative to effort
+- Cross-platform binary releases (Linux x86_64/aarch64, macOS x86_64/aarch64, Windows x86_64)
 
-**Should have (competitive advantage -- P2):**
-- Zero-copy video pipeline (2-5x speedup on video-heavy workloads)
-- Single static binary distribution (massive DX improvement over Python's 3GB+ dependency tree)
-- HuggingFace Hub upload
-- Visualization, video export, stats command, shell completions
-- Deterministic output mode for ML reproducibility
-
-**Defer (v2+):**
-- Bidirectional all-format writing (HDF5, Zarr, ROS bag writers)
-- Prefetching ring buffer decoder
-- SIMD-accelerated quality metrics (optimize after profiling)
-- Streaming quality with early exit
-- Dataset splitting/merging
-
-**Anti-features (explicitly NOT building):**
-- Python bindings (PyO3) -- reintroduces GIL
-- GPU-accelerated operations -- breaks cross-platform promise
-- Runtime format plugins -- format count is small and static
-- Web-based visualization UI -- use Foxglove/Rerun instead
-- Built-in training integration -- scope creep
+**Defer to v3+ (explicit anti-features):**
+- Python bindings (PyO3) — defeats single-binary goal and doubles maintenance burden
+- Full TensorFlow dependency for RLDS — 2GB runtime, incompatible with single binary
+- ROS 1 .bag writing — format is EOL; MCAP is readable by both ROS 1 and ROS 2
+- Image augmentation during conversion — training frameworks handle this better on GPU
+- GUI visualization (matplotlib/OpenCV) — breaks headless/SSH use case, 200MB+ deps
 
 ### Architecture Approach
 
-The architecture follows a layered workspace design with strict dependency ordering: `forge-core` (zero external deps) at the foundation, format plugins and video as parallel middle layers, pipeline orchestration on top, and a thin CLI shell. Episode processing uses a parallel-read / sequential-write pattern via bounded channels, avoiding shared mutable writer state. All formats dispatch through a compile-time enum (not trait objects) for inlining and zero-overhead polymorphism. See [ARCHITECTURE.md](./ARCHITECTURE.md) for full component diagram and data flow.
+The v1.0 `FormatReader`/`FormatWriter` trait architecture scales linearly to 8 formats without trait changes. Each new format is a module directory under `forge-formats/` with exactly 4 registry touch points (`lib.rs` mod declaration, `all_formats()` entry, `detect_format()` check, `get_reader()`/`get_writer()` match arm). No changes to `forge-core` types or `forge-pipeline` are needed per format. Two new crates isolate concerns with different dependency profiles: `forge-hub` (async reqwest + hf-hub + tokio) and `forge-viz` (ratatui + crossterm). The CLI grows from 3 to 10+ subcommands via a `commands/` module tree refactor of the current monolithic `main.rs`.
 
-**Major components:**
-1. **forge-core** -- Episode, Frame, DatasetInfo, ForgeError, ConversionConfig. The "lingua franca" all crates share. Changes here are expensive.
-2. **forge-video** -- FFmpeg FFI wrapper isolated into its own crate so build failures do not cascade. Decoder produces frame iterators; encoder consumes them.
-3. **forge-formats** -- All 8 format readers + writers in one crate with internal modules. Enum dispatch via `AnyReader`/`AnyWriter`. Feature flags gate heavy FFI deps (HDF5, video).
-4. **forge-quality** -- Streaming quality accumulators operating frame-by-frame. Depends only on core + ndarray. Runs inline during conversion or standalone.
-5. **forge-pipeline** -- Rayon-based parallel conversion orchestrator. Owns the bounded-channel writer thread pattern. Wires formats, quality, and transforms together.
-6. **forge-cli** -- Thin binary: clap parsing, indicatif progress, dispatch to pipeline. No business logic.
+**Major components for v2.0:**
+1. `forge-formats` (modified) — 7 new reader modules + 6 new writer modules; feature-gated for hdf5, zarr, rlds, ros; enriched registry with 8-format confidence-scored detection
+2. `forge-hub` (new crate) — async Hub download with cache, custom LFS upload REST client, auth token management from env or file
+3. `forge-viz` (new crate) — ratatui TUI viewer with episode browser, frame scrubbing, sixel image display, action/state sparklines
+4. `forge-core` (minor modification) — enriched `ConversionConfig` with `hub_repo`, `reader_options`, `writer_options` as `HashMap<String, serde_json::Value>`
+5. `forge-cli` (modified) — `commands/` module tree, 10+ subcommands, wires forge-hub and forge-viz as optional features
 
 **Key patterns:**
-- Enum dispatch (not trait objects) for format plugins -- 10x faster dispatch, compiler can inline
-- Channel-sink pattern for writer isolation -- rayon workers send to single writer thread via bounded channel
-- Streaming quality pass -- metrics computed incrementally per-frame, no second read of data
-- Zero-copy via `bytes::Bytes` for video frames and Arrow slices for tabular data
+- HDF5 reads are always sequential (open file, enumerate episodes, collect into Vec, then parallelize downstream conversion with rayon) — the HDF5 C library global lock serializes reads regardless of threading
+- Async Hub operations complete before the sync rayon conversion pipeline starts — never mix tokio async and rayon sync in the same call stack
+- `WriterConfig` struct (fps, robot_type, compression, chunk_size, format_specific HashMap) replaces format-specific constructor args to keep `get_writer()` signature stable as writers multiply
 
 ### Critical Pitfalls
 
-The top 5 pitfalls that can derail the project, ranked by impact. See [PITFALLS.md](./PITFALLS.md) for full list including recovery strategies.
+1. **TFRecord protobuf complexity without TensorFlow** — Do NOT build against the TensorFlow source tree. Vendor exactly 4 proto files; implement the TFRecord wire format in ~50 lines (u64 length LE, u32 masked CRC32C, data, u32 CRC). Handle `SequenceExample` (not just `Example`) for RLDS episode structure. Detect and decode JPEG/PNG images inside `BytesList` features using image magic bytes. Test against 5+ diverse Open-X datasets (RT-1, Bridge v2, DROID, Fractal, Language Table) before declaring done.
 
-1. **Arrow/Parquet schema divergence from PyArrow** -- `arrow-rs` and `pyarrow` produce different Arrow metadata in Parquet footers. LeRobot's Python training stack expects specific schema details. **Prevention:** Golden-file tests comparing Rust output with `pyarrow.parquet.read_schema()`. Explicitly match `WriterProperties` (Parquet v2, Snappy, `pandas_metadata` blob).
+2. **HDF5 C library thread safety with rayon** — Most system libhdf5 packages are built without `--enable-threadsafe`. Resolution: read all HDF5 episodes sequentially in a single thread into `Vec<Episode>`, then pass to rayon for parallel downstream processing. HDF5 I/O is disk-bound; the global lock eliminates parallelism benefit anyway. Also: macOS Homebrew ships HDF5 with 4-component versions (1.14.4.3) that cause `hdf5-sys` version parsing failures — use hdf5-metno fork which handles this.
 
-2. **FFmpeg cross-platform linking** -- FFmpeg is 8+ libraries with dozens of optional codec deps. Version skew across platforms causes build failures or runtime segfaults. **Prevention:** Pin FFmpeg 6.0+ minimum. CI matrix on Ubuntu 22/24, macOS, Windows. Document installation instructions per platform. Solve in Phase 0 before any video code.
+3. **Zarr V2 Blosc decompression compatibility** — zarrs primarily targets V3; robotics datasets (Diffusion Policy, UMI, PushT) are V2 with Blosc LZ4/Zstd codecs. Validate zarrs V2 support against a real Diffusion Policy PushT dataset in the first week of Phase 5-02. If zarrs V2 support is insufficient, budget 1-2 weeks for a custom V2 reader (format is well-documented with .zarray JSON metadata and per-chunk files).
 
-3. **TFRecord/RLDS parsing without TensorFlow** -- No mature Rust RLDS library. Must vendor TF proto definitions and build custom parser. RLDS datasets have variable schemas per dataset. **Prevention:** Vendor `example.proto` + `feature.proto`, generate with `prost`. Implement TFRecord container format from scratch (it is simple). Test against 5+ diverse Open-X datasets.
+4. **Format auto-detection ambiguity with 8 overlapping formats** — Refactor `detect_format()` from boolean first-match to confidence-scored detection BEFORE adding the second format (1-day refactor that prevents cascading detection bugs). GR00T vs LeRobot v2 is the primary ambiguity — GR00T datasets match LeRobot v2 structure but contain `meta/modality.json`. Detection priority order: GR00T > LeRobot v3 > LeRobot v2 > RLDS > HDF5 > Zarr > RoboDM > ROS bags. Always expose `--format` CLI override.
 
-4. **Video codec reproducibility** -- H.264 encoding is lossy and non-deterministic. Frame count mismatches between Rust-encoded and Python-encoded MP4s break timestamp alignment. **Prevention:** Match PyAV encoding parameters exactly (CRF, preset, profile, keyframe interval, `yuv420p`). Force keyframes at episode boundaries.
-
-5. **HDF5 thread safety** -- System HDF5 is typically NOT compiled with `--enable-threadsafe`. Parallel rayon reads cause crashes. **Prevention:** Read all HDF5 episodes sequentially into memory buffers, then parallelize downstream. HDF5 I/O is disk-bound anyway.
+5. **HuggingFace Hub Xet/LFS upload complexity** — hf-hub v0.5 is download-only; upload requires ~400 lines of custom REST API client (create_repo, preupload LFS, upload to S3, create_commit). HF is migrating to Xet storage but LFS upload remains supported as a compatibility layer. Implement LFS-based upload first. Do NOT attempt to consume `hf_xet` directly — it is a Python-internal Rust library accessed via PyO3, not a public API. If LFS is broken by Phase 8, use `huggingface-cli` as a temporary stopgap.
 
 ## Implications for Roadmap
 
-Based on research, the dependency chain and risk profile suggest 7 phases. The ordering is driven by three principles: (a) de-risk FFI dependencies early, (b) validate end-to-end data flow before adding format breadth, (c) defer optimizations until profiling proves need.
+Based on combined research, the following 4-phase structure is recommended for v2.0:
 
-### Phase 1: Project Scaffolding and Core Types
-**Rationale:** Everything depends on `forge-core`. The Episode/Frame data model is the contract every other crate implements against. FFmpeg and HDF5 linking must be proven on CI before any code depends on them.
-**Delivers:** Cargo workspace, `forge-core` crate (Episode, Frame, DatasetInfo, ForgeError, ConversionConfig), CI pipeline with FFmpeg/HDF5 linking tests on Linux + macOS.
-**Addresses:** Core models (foundation for all features), FFmpeg linking validation (Pitfall 2), HDF5 build config (Pitfall 6).
-**Avoids:** FFmpeg linking hell by solving it before video code exists. HDF5 thread safety by establishing the sequential-read pattern early.
+### Phase 5: Format Readers
 
-### Phase 2: Video Pipeline and LeRobot v3 End-to-End
-**Rationale:** LeRobot v3 is the primary conversion target (80%+ of conversions). It requires both Parquet writing AND H.264 video encoding. Proving this end-to-end validates the core architecture (enum dispatch, channel-sink writer, zero-copy video).
-**Delivers:** `forge-video` crate (FFmpeg decode/encode), `forge-formats` crate with LeRobot v3 reader + writer, `forge-pipeline` with basic sequential conversion, golden-file schema tests against PyArrow.
-**Addresses:** Video encoding (P1), LeRobot v3 writer (P1), format auto-detection for LeRobot (P1), Parquet schema compatibility (Pitfall 1), video codec reproducibility (Pitfall 5).
-**Uses:** arrow-rs, parquet, ffmpeg-next, serde_json.
+**Rationale:** All downstream work (writers, CLI, Hub, viz) depends on working readers. The `forge-formats` registry must be extended before anything else. Build readers in increasing dependency complexity to validate the pattern at low risk before tackling C-FFI formats. Confidence-scored format detection must be implemented immediately after LeRobot v2 (the second reader) to prevent detection bugs from compounding.
 
-### Phase 3: Parallel Pipeline and Quality Analysis
-**Rationale:** Rayon parallelism and quality analysis are both table stakes from Python Forge. They depend on the core pipeline from Phase 2 but can be developed semi-independently (`forge-quality` depends only on `forge-core`).
-**Delivers:** `forge-quality` crate (all 8 metrics, streaming accumulators, composite scoring), rayon parallel episode processing in `forge-pipeline`, episode filtering, progress reporting via indicatif.
-**Addresses:** Parallel processing (P1), quality analysis (P1), episode filtering (P1), progress reporting (P1).
-**Avoids:** Double thread pool trap (set FFmpeg threads to 1 under rayon). Shared mutable writer anti-pattern (channel-sink already established in Phase 2).
+**Delivers:** 7 new format readers, 8-format auto-detection, fully populated `forge formats` output, validated "add a format" workflow.
 
-### Phase 4: Remaining Format Readers
-**Rationale:** With the pipeline proven on LeRobot v3, adding readers for RLDS, HDF5, Zarr, ROS bags, and LeRobot v2 is incremental. Each reader is independent. RLDS is the riskiest (Pitfall 4) and should come first to de-risk early.
-**Delivers:** RLDS reader (vendored proto + custom parser), HDF5 reader (hdf5-metno with sequential read pattern), Zarr reader (zarrs with v2 compatibility verified), ROS bag reader (rosbag + mcap), LeRobot v2 reader, RoboDM reader.
-**Addresses:** Multi-format reading (P1), RLDS writer (P1), format auto-detection for all formats (P1).
-**Avoids:** TFRecord parsing pitfall (Pitfall 4) by prototyping RLDS early. Zarr v2/v3 confusion (Pitfall 7) by testing against real Diffusion Policy datasets.
+**Addresses:** All 7 table-stakes reader features, GR00T reader as LeRobot v2 thin wrapper, format auto-detection for full matrix.
 
-### Phase 5: CLI, Config, and Hub Download
-**Rationale:** The CLI is a thin shell over the pipeline, but it defines the user experience. YAML config, field/camera remapping, and Hub download complete the table-stakes feature set needed for users to switch from Python Forge.
-**Delivers:** `forge-cli` crate with all subcommands (inspect, convert, quality, filter, hub, formats, stats, version), YAML config parsing, field/camera name remapping, HuggingFace Hub download via reqwest, dataset inspection with JSON + text output, error handling with continuation.
-**Addresses:** CLI (P1), YAML config (P1), field/camera remapping (P1), HF Hub download (P1), dataset inspection (P1), error continuation (P1).
+**Avoids:** Format detection ambiguity (refactor before second reader), HDF5 thread safety (sequential read pattern), Zarr V2 compatibility (test against real data early in 05-02).
 
-### Phase 6: Performance Optimization and Release
-**Rationale:** Optimization should follow profiling, not precede it. By this phase, the full pipeline works end-to-end across all formats. Profile to identify actual bottlenecks, then optimize.
-**Delivers:** Zero-copy video pipeline refinement, single static binary distribution, cross-platform binary releases (Linux x86_64/aarch64, macOS x86_64/aarch64), benchmarks against Python Forge, shell completions, deterministic output mode.
-**Addresses:** Zero-copy pipeline (P1 architecture), single binary distribution (P2), shell completions (P2), deterministic output (P2), cross-platform releases (P3).
+**Recommended sub-batches:**
+- 05-01: LeRobot v2 reader + GR00T reader + confidence-scored registry refactor (zero new deps, validates pattern)
+- 05-02: RLDS/TFRecord reader + Zarr reader (pure Rust, no system deps; validate against real Open-X and Diffusion Policy data)
+- 05-03: HDF5 reader + ROS bag reader (ROS 1 + MCAP) + RoboDM reader (C-FFI and custom EBML; highest risk)
 
-### Phase 7: Hub Upload and Ecosystem Features
-**Rationale:** Hub upload requires implementing the HuggingFace REST API from scratch including Git LFS protocol. This is a 2-3 week effort that is not on the critical path for local conversion. Defer until core is solid.
-**Delivers:** HuggingFace Hub upload (create repo, LFS upload, commit creation), visualization (terminal-based via ratatui), video export, stats command, GR00T reader.
-**Addresses:** HF Hub upload (P2), visualization (P2), video export (P2), stats command (P2).
-**Avoids:** HuggingFace Hub upload pitfall (Pitfall 3) by implementing download-only first and building upload as a separate, well-scoped effort.
+**Research flag:** Phase 05-03 needs close attention: HDF5 macOS version parsing bug, ROS CDR deserialization for ~5 message types, and RoboDM EBML parsing (no public spec) are each potential 1-2 week overruns. Prototype each separately before integration.
+
+### Phase 6: Format Writers + Round-Trip Tests
+
+**Rationale:** Writers require readers to be stable (the round-trip test pattern `format A -> LeRobot v3 -> format A` is the primary correctness signal). Build writers in the same complexity order as readers. Introduce `WriterConfig` before the second writer to keep `get_writer()` signature stable.
+
+**Delivers:** 6 new writers enabling full bidirectional conversion across all 8 formats; `forge convert` covers the complete format matrix.
+
+**Addresses:** RLDS writer, HDF5 writer, Zarr writer, MCAP writer, LeRobot v2 writer, RoboDM writer; round-trip integration tests for each.
+
+**Avoids:** WriterConfig scalability problem (introduce struct before second writer); MCAP writer must embed ROS message schemas inline or ROS tools cannot read the output; `finalize()` must always be called even on error (use RAII wrapper).
+
+**Recommended sub-batches:**
+- 06-01: LeRobot v2 writer + RLDS writer + round-trip tests for both
+- 06-02: HDF5 + Zarr + MCAP + RoboDM writers + round-trip tests for all four
+
+**Research flag:** MCAP writer schema embedding and RLDS SequenceExample serialization need careful spec review before implementation. RoboDM EBML writer is the highest-risk item in this phase — consider prototyping EBML writing in a standalone test before integration.
+
+### Phase 7: CLI Expansion, Config, and Hub Download
+
+**Rationale:** CLI subcommands and Hub download depend on all formats being readable (inspect, stats, and hub download all exercise the reader path). Hub download is simpler than upload and unblocks end-to-end user workflows before Phase 8. CLI refactor (`commands/` module tree) should open Phase 7 to give writers clean integration points.
+
+**Delivers:** Full 10+ subcommand CLI, YAML config with auto-generation, `forge hub download` with caching and auth, shell completions.
+
+**Addresses:** `forge inspect`, `forge quality`, `forge filter`, `forge stats`, `forge export-video`, `forge hub download`, YAML conversion config with `reader_options`/`writer_options`.
+
+**Avoids:** Hub download Xet pointer file trap — use direct CDN URL construction (`https://huggingface.co/datasets/{repo_id}/resolve/{revision}/{path}`) rather than hf-hub's snapshot API to bypass LFS/Xet resolution complexity. Async/sync boundary: Hub download completes before rayon pipeline starts; never mix tokio async and rayon within one call path.
+
+**Recommended sub-batches:**
+- 07-01: CLI refactor to `commands/` module tree + inspect/quality/filter subcommands (wires existing pipeline code)
+- 07-02: `forge stats` + `forge export-video` + YAML config enrichment + `--generate-config` auto-generation
+- 07-03: `forge-hub` crate (download path) + `forge hub download` command + shell completions
+
+**Research flag:** `forge-hub` crate requires explicit async/sync boundary enforcement — the architectural pattern (download first, convert second, never mixed) must be documented and tested as a concurrent anti-pattern guard in Phase 07-03.
+
+### Phase 8: Hub Upload, Visualization, and Distribution
+
+**Rationale:** Hub upload is the highest-complexity single feature in v2.0; visualization is independent and high-value for UX; cross-platform distribution is the final gate before v2.0 release. These three can be developed in parallel within the phase, with distribution blocked only on stability of all other features.
+
+**Delivers:** `forge hub upload` with LFS, `forge visualize` ratatui TUI, cross-platform binary releases for 5 targets, complete v2.0 feature set.
+
+**Addresses:** Hub upload with LFS protocol (create_repo, preupload, S3 PUT, create_commit), interactive TUI dataset browser, GitHub Actions release matrix.
+
+**Avoids:** Cross-platform C library distribution trap — do NOT attempt fully static binaries; accept system library runtime dependencies; document installation instructions per platform; bundle DLLs on Windows; feature-gate HDF5 and Blosc so a zero-C binary variant always compiles. License trap: x264 static linking introduces GPL contamination — use dynamic linking for release binaries.
+
+**Recommended sub-batches:**
+- 08-01: `forge hub upload` (LFS REST client, ~400 lines) + `forge visualize` (ratatui TUI with sixel image display)
+- 08-02: Cross-platform CI release matrix (GitHub Actions, 5 targets, static HDF5 option for releases, DLL bundling for Windows)
+
+**Research flag:** Hub upload is the least-verified area. Prototype the LFS batch API (`POST {repo}.git/info/lfs/objects/batch`) and S3 presigned URL upload against a real HF test repository in Phase 07-03 (before full implementation in 08-01). If HF has changed the LFS compatibility layer by Phase 8, fallback to `huggingface-cli` shell-out as a stopgap.
 
 ### Phase Ordering Rationale
 
-- **Core types first (Phase 1)** because every crate depends on `forge-core`. Changes to Episode/Frame after format readers are built cause cascading rewrites.
-- **LeRobot v3 end-to-end second (Phase 2)** because it exercises the highest-risk components (Parquet writing, video encoding) and validates the core architecture before breadth is added.
-- **Quality before format breadth (Phase 3 before Phase 4)** because quality analysis depends only on `forge-core` and is a key differentiator. Building it early means it is available as formats are added.
-- **RLDS first among remaining formats (Phase 4)** because it is the riskiest reader (custom proto parsing, variable schemas) and the second-most-important output format.
-- **CLI last among core features (Phase 5)** because it is a thin layer that changes frequently. Building it too early means constant churn as the pipeline API evolves.
-- **Optimization after correctness (Phase 6)** because premature optimization is the root of all evil. Profile first, then optimize the actual bottlenecks.
-- **Hub upload last (Phase 7)** because it is complex (LFS protocol), not on the critical path, and the HF REST API is undocumented for direct usage.
+- Readers precede writers because round-trip tests (the primary writer correctness signal) require working readers.
+- CLI and Hub precede distribution because all subcommands must be stable before cutting release binaries; distribution constraints (feature flags, static linking decisions) depend on knowing the final C FFI surface.
+- Within Phase 5, LeRobot v2 comes first (70% code reuse, validates the pattern at zero risk) before RLDS (high risk, custom proto parsing) before HDF5/ROS/RoboDM (C FFI and sparse documentation).
+- Confidence-scored format detection refactor happens immediately after the second reader (LeRobot v2, Phase 05-01) — a 1-day investment that eliminates a class of detection bugs that compounds with every additional format.
+- Hub upload is placed after Hub download (Phase 8 after Phase 7) because download provides the auth/caching/HTTP infrastructure that upload builds on.
 
 ### Research Flags
 
-Phases likely needing deeper research during planning:
-- **Phase 2 (Video + LeRobot v3):** PyArrow schema compatibility requires investigation of exact `WriterProperties` needed. FFmpeg encoder parameter matching against PyAV needs the Python Forge source code as reference.
-- **Phase 4 (RLDS reader):** RLDS schema discovery across Open-X datasets is poorly documented. Need to prototype against 5+ real datasets before committing to the reader design.
-- **Phase 4 (Zarr reader):** Must verify `zarrs` crate handles Zarr v2 format used by Diffusion Policy datasets. May need a custom v2 reader (1-2 weeks).
-- **Phase 7 (Hub upload):** HuggingFace Hub REST API for upload is undocumented. Must reverse-engineer from Python `huggingface_hub` source code. Git LFS batch API adds complexity.
+Phases needing deeper research or prototyping during planning:
 
-Phases with standard patterns (skip research-phase):
-- **Phase 1 (Scaffolding):** Cargo workspace setup, CI configuration, and error type design are well-documented Rust patterns.
-- **Phase 3 (Parallelism + Quality):** Rayon parallel iteration and ndarray numerical computation are thoroughly documented with established patterns.
-- **Phase 5 (CLI):** Clap derive macros, indicatif progress bars, and YAML config parsing are standard Rust CLI patterns.
+- **Phase 05-02 (RLDS reader):** Custom protobuf parsing without TF, schema variability across 20+ Open-X datasets, image encoding detection — highest implementation risk in the milestone. Test against 5 diverse datasets before declaring complete.
+- **Phase 05-03 (HDF5 reader):** macOS version parsing bug in hdf5-sys, CI cross-platform build matrix, thread safety stress test with rayon. Verify with a 50-episode sequential read stress test.
+- **Phase 05-03 (RoboDM reader):** No public EBML spec for .vla format — must reverse-engineer from Python robodm reader. Prototype EBML parsing standalone before integration.
+- **Phase 06-02 (MCAP writer):** ROS message schema embedding requires close adherence to MCAP spec for output to be readable by `ros2 bag info`.
+- **Phase 08-01 (Hub upload):** LFS batch API and Xet compatibility layer behavior must be prototyped against a real HF repo before Phase 08-01 begins. Prototype in Phase 07-03.
+
+Phases with well-documented patterns (can skip dedicated research):
+
+- **Phase 05-01 (LeRobot v2 + GR00T):** Direct code reuse from v3 reader; GR00T is a thin metadata wrapper. Well-documented by codebase analysis.
+- **Phase 07-01 (CLI refactor):** Standard clap `commands/` module tree pattern; wires existing pipeline code to new subcommands.
+- **Phase 08-02 (Cross-platform releases):** Standard GitHub Actions CI matrix with `cross` for Linux aarch64; documented by cross-rs and actions-rust-cross.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | MEDIUM-HIGH | Core crates (arrow-rs, rayon, clap, tokio) are HIGH confidence. Format-specific FFI crates (hdf5-metno, tfrecord, zarrs) are MEDIUM due to smaller maintainer base and rapid ecosystem evolution. |
-| Features | HIGH | Based on direct analysis of existing Python Forge codebase and competitive landscape. Feature priorities are clear from user workflows. |
-| Architecture | HIGH | Layered workspace, enum dispatch, channel-sink parallelism are well-established Rust patterns with extensive community documentation and benchmarks. |
-| Pitfalls | MEDIUM-HIGH | Critical pitfalls (schema divergence, FFmpeg linking, RLDS parsing) are well-documented across multiple sources. Some crate-specific claims may shift as crates evolve. |
+| Stack | HIGH | All crate versions verified against docs.rs and crates.io. Known version conflicts (tfrecord/prost, hf-hub/reqwest) identified with concrete mitigations. |
+| Features | HIGH | Derived from direct analysis of Python Forge source code and format spec documentation (RLDS, HDF5, Zarr, MCAP, GR00T). Format-specific conventions cross-referenced against multiple authoritative sources. |
+| Architecture | HIGH | Based on direct v1.0 codebase analysis. Registry extension pattern verified against existing lerobot_v3 implementation. New crate boundaries follow established Rust workspace patterns. |
+| Pitfalls | MEDIUM-HIGH | Critical pitfalls (HDF5 thread safety, TFRecord proto, Zarr V2, format detection) sourced from documented GitHub issues and format specs. Hub upload complexity sourced from HF official docs and Python SDK source. RoboDM EBML is the lowest-confidence area. |
 
-**Overall confidence:** MEDIUM-HIGH
+**Overall confidence:** HIGH
 
-### Gaps to Address
+### Gaps to Address During Implementation
 
-- **PyArrow schema compatibility:** No definitive reference for exactly which `WriterProperties` and Arrow metadata keys match `pyarrow` output. Must be validated empirically with golden-file tests during Phase 2.
-- **HuggingFace Hub upload API:** The REST API for upload (especially LFS) is undocumented for direct usage. Must reverse-engineer from Python `huggingface_hub` source. Estimated 2-3 weeks of implementation effort.
-- **Zarr v2 support in `zarrs` crate:** Claims "v3-compatible subset of v2" but unclear if this covers Diffusion Policy datasets (Blosc compression, nested groups). Must test against real data before committing.
-- **RLDS schema variability:** Each Open-X Embodiment dataset has a different schema. The reader must handle runtime schema discovery, which is poorly documented. Need prototyping against 5+ real datasets.
-- **FFmpeg static linking feasibility:** The PROJECT.md desires "single static binary" but static linking FFmpeg with all codecs is notoriously difficult. May need to settle for dynamic linking + platform-specific install instructions.
-- **Quality metric numerical parity:** The 8 quality metrics must produce identical scores to Python Forge for user trust. LDLJ smoothness uses SciPy's finite differences internally -- the Rust implementation must match at episode boundaries. Needs careful numerical validation.
+- **RoboDM EBML spec:** The .vla format is documented only in the robodm GitHub repository with no external specification. Implementation requires reverse-engineering from the Python reader. Budget extra time in Phase 05-03 and 06-02. If effort exceeds 2 weeks, defer RoboDM writer to a v2.1 patch.
+- **HuggingFace Xet upload API:** LFS compatibility is stated to be maintained, but this is unverified with the current (Feb 2026) state of the HF API. Prototype against a real HF repo during Phase 07-03 before committing to full Phase 08-01 implementation.
+- **zarrs V2 Blosc compatibility with real Diffusion Policy data:** Claims V2 support but as "a V3-compatible subset of V2." The first integration test against a real PushT Zarr dataset (Phase 05-02, week 1) resolves this gap. If insufficient, pivot to custom V2 reader immediately.
+- **prost/tfrecord version pinning:** Verify with `cargo tree` at workspace setup that tfrecord 0.15 and direct prost usage do not introduce duplicate protobuf runtimes. Run before Phase 05-02 begins.
+- **reqwest/hf-hub version alignment:** Verify with `cargo tree -d` before starting Phase 07-03 that hf-hub's internal reqwest does not conflict with direct reqwest usage.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- [Apache Arrow Rust (arrow-rs)](https://github.com/apache/arrow-rs) -- Parquet/Arrow implementation, version compatibility, WriterProperties API
-- [LeRobotDataset v3.0 Documentation](https://huggingface.co/docs/lerobot/en/lerobot-dataset-v3) -- format specification, metadata schema, video storage
-- [rayon on crates.io](https://crates.io/crates/rayon) -- 266M downloads, work-stealing parallelism patterns
-- [clap on crates.io](https://crates.io/crates/clap) -- CLI framework, derive macros, subcommand patterns
-- [Forge Python codebase](https://github.com/arpitg1304/forge) -- existing feature set, architecture, quality metrics implementation
-- [Open-X Embodiment](https://robotics-transformer-x.github.io/) -- RLDS format and dataset ecosystem
-- [Rust Design Patterns](https://rust-unofficial.github.io/patterns/) -- enum dispatch, error handling, workspace structure
+- v1.0 codebase (6-crate Rust workspace, direct analysis) — traits, registry, episode model, pipeline
+- Python Forge codebase (direct analysis) — all 8 format readers, 3 writers, hub client, visualization code
+- [TFRecord format spec](https://www.tensorflow.org/tutorials/load_data/tfrecord) — wire format (length + masked CRC32C + data)
+- [Anatomy of TFRecord (Jong Wook Kim)](https://jongwook.kim/blog/Anatomy-of-TFRecord.html) — binary format analysis
+- [robomimic HDF5 dataset documentation](https://robomimic.github.io/docs/datasets/overview.html) — group structure reference
+- [UMI / Diffusion Policy Zarr layout](https://umi-data.github.io/) — episode_ends convention, Blosc codec
+- [MCAP specification](https://mcap.dev/guides) — ROS 2 bag format
+- [NVIDIA Isaac GR00T documentation](https://github.com/NVIDIA/Isaac-GR00T) — GR00T format = LeRobot v2 compatible
+- [hdf5-sys GitHub issue #297](https://github.com/aldanor/hdf5-rust/issues/297) — macOS version parsing bug (documented)
+- [hdf5-sys GitHub issue #164](https://github.com/aldanor/hdf5-rust/issues/164) — static build CMake problems
+- [HuggingFace Hub API docs](https://huggingface.co/docs/hub/en/api) — upload REST API flow
+- [HuggingFace Upload guide](https://huggingface.co/docs/huggingface_hub/guides/upload) — LFS and commit flow
+- [ratatui v0.30 release](https://ratatui.rs/highlights/v030/) — modular architecture, crossterm 0.29 backend
+- [cross-rs GitHub](https://github.com/cross-rs/cross) — Docker-based cross-compilation
+- [actions-rust-cross](https://github.com/houseabsolute/actions-rust-cross) — GitHub Action for Rust cross-compilation
+- [Open-X Embodiment (RLDS)](https://github.com/google-deepmind/open_x_embodiment) — RLDS format structure
 
 ### Secondary (MEDIUM confidence)
-- [hdf5-metno on crates.io](https://crates.io/crates/hdf5-metno) -- maintained fork, v0.11.0, FFI to system HDF5
-- [zarrs documentation](https://docs.rs/zarrs/latest/zarrs/) -- Zarr v3 conformant, v2 subset support claimed
-- [ffmpeg-next on crates.io](https://crates.io/crates/ffmpeg-next) -- v8.0.0, FFmpeg 6/7/8 support
-- [The state of SIMD in Rust in 2025](https://shnatsel.medium.com/the-state-of-simd-in-rust-in-2025-32c263e5f53d) -- pulp recommendation for stable SIMD
-- [hf-hub Rust crate](https://github.com/huggingface/hf-hub) -- confirms download-only, no upload capability
-- [Robo-DM paper (ICRA 2025)](https://arxiv.org/abs/2505.15558) -- competitive landscape, compression benchmarks
-- [Polars Parquet schema control issue](https://github.com/pola-rs/polars/issues/17418) -- confirms arrow-rs/pyarrow schema divergence is known
+- [zarrs v0.23 docs](https://docs.rs/zarrs/latest/zarrs/) — V2 compatibility documented as "V3-compatible subset"
+- [Zarr Blosc issue #2171](https://github.com/zarr-developers/zarr-python/issues/2171) — v2 vs v3 Blosc behavior difference
+- [hf-hub v0.5.0 docs](https://docs.rs/hf-hub/0.5.0/hf_hub/) — download-only scope confirmed
+- [HuggingFace Xet storage docs](https://huggingface.co/docs/hub/en/xet/index) — Xet transition timeline and LFS compatibility
+- [rosbag-rs (SkoltechRobotics)](https://github.com/SkoltechRobotics/rosbag-rs) — pure Rust ROS 1 reader, limited recent development
+- [tfrecord v0.15 on lib.rs](https://lib.rs/crates/tfrecord) — last updated Sept 2023, 10K downloads/month
+- [Robo-DM paper (ICRA 2025)](https://arxiv.org/abs/2505.15558) — .vla EBML format description
+- [hdf5-metno on crates.io](https://crates.io/crates/hdf5-metno) — maintained fork confirmed active
 
-### Tertiary (LOW confidence, needs validation)
-- [tfrecord on crates.io](https://crates.io/crates/tfrecord) -- v0.14.x, single maintainer, RLDS-specific behavior unverified
-- [rosbag on crates.io](https://crates.io/crates/rosbag) -- v0.2.x, limited recent development
-- [rosbags-rs crate](https://crates.io/crates/rosbags-rs) -- relatively new, ROS 2 CDR deserialization coverage unverified
+### Tertiary (LOW-MEDIUM confidence)
+- [HF XetHub transition forum thread](https://discuss.huggingface.co/t/hf-hub-commit-api-isnt-accepting-lfs-files/113997) — LFS to Xet migration side effects
+- RoboDM EBML format — inferred from Python reader source; no external spec exists
 
 ---
 *Research completed: 2026-02-21*
+*Synthesized: 2026-02-22*
 *Ready for roadmap: yes*

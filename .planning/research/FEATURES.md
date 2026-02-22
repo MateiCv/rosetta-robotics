@@ -1,270 +1,508 @@
-# Feature Research
+# Feature Research: v2.0 Format Breadth & Distribution
 
-**Domain:** Robotics dataset conversion CLI (format converter, quality analyzer, dataset management)
+**Domain:** Robotics dataset format readers/writers, CLI expansion, Hub integration, visualization
 **Researched:** 2026-02-21
-**Confidence:** HIGH (based on existing Python codebase analysis, competitive landscape review, and Rust ecosystem verification)
+**Confidence:** HIGH (based on Python reference implementation analysis, format spec research, Rust crate verification)
+
+## Scope
+
+This research covers ONLY the v2.0 milestone features being added to the existing Rust codebase. The following are already shipped in v1.0 and NOT covered here:
+
+- LeRobot v3 Parquet+MP4 read/write with round-trip validation
+- H.264 video encode/decode pipeline
+- Parallel episode conversion with rayon
+- 7 quality metrics with SIMD acceleration
+- Composite scoring, episode filtering, JSON export
+- CLI: `forge version`, `forge formats`, `forge convert`
+- Format registry with auto-detection (currently only LeRobot v3)
+- Error continuation, deterministic mode, progress bars
 
 ## Feature Landscape
 
 ### Table Stakes (Users Expect These)
 
-Features users assume exist. Missing these = product feels incomplete. These must reach parity with the existing Python Forge before users will adopt the Rust version.
+Features users assume exist for a "universal robotics dataset converter." Missing any of these means the tool cannot serve the claimed use case.
+
+#### Format Readers (7 new formats)
+
+| Feature | Why Expected | Complexity | Rust Crate Dependency | Pipeline Dependency |
+|---------|--------------|------------|----------------------|---------------------|
+| **RLDS/TFRecord reader** | Open-X Embodiment (1M+ trajectories from 22 platforms) is the largest robotics dataset collection. Octo, OpenVLA, RT-X all train on RLDS. Without this reader, Forge cannot access the Google robotics ecosystem. | HIGH | `tfrecord` crate for TFRecord parsing + `prost` for protobuf. TF-specific: `dataset_info.json` for shard metadata, `features.json` for TFDS feature spec. Compression: uncompressed, GZIP, or ZLIB per-shard. | None -- standalone reader. Outputs Episode/Frame to existing pipeline. |
+| **LeRobot v2 reader** | Many existing HuggingFace datasets still use v2 format. GR00T N1 uses v2-compatible schema. LeRobot v2 shares Parquet+MP4 structure with v3 but uses `data/chunk-NNN/episode_NNNNNN.parquet` layout and `meta/info.json` with `codebase_version` field. | LOW | Already have `arrow-rs` for Parquet and `ffmpeg-next` for MP4. Difference from v3: one Parquet file per episode (not per-chunk), different metadata schema, `features` dict in `info.json` has `shape`/`dtype` per key. | Reuses existing Parquet reading and MP4 decode from v1.0 LeRobot v3 pipeline. |
+| **HDF5 reader (robomimic + ACT/ALOHA)** | robomimic is the standard benchmarking framework. ACT/ALOHA datasets are widely used for bimanual manipulation. Two distinct layouts must be supported. | MEDIUM | `hdf5` crate (Rust bindings to libhdf5). System dependency on `libhdf5-dev`. | None -- standalone reader. Must handle two layout variants internally. |
+| **Zarr reader (Diffusion Policy/UMI)** | Diffusion Policy and UMI use Zarr stores with Blosc compression. Zarr stores chunked arrays with `episode_ends` metadata for episode boundaries. | MEDIUM | `zarrs` crate for Zarr V2/V3. Blosc decompression via `blosc` feature flag. | None -- standalone reader. |
+| **ROS bag reader (ROS 1 + ROS 2 MCAP)** | ROS is the dominant robot middleware. ROS 1 `.bag` files use a custom binary format. ROS 2 uses MCAP (since Iron). Must handle both without requiring ROS to be installed. | HIGH | `mcap` crate (Foxglove) for MCAP/ROS 2. ROS 1 `.bag` needs custom parsing (binary format with chunk/index structure). `rosbags` Python library approach: pure reader without ROS dependency. | None -- standalone reader. Image deserialization (sensor_msgs/Image) needs `encoding` field parsing (rgb8, bgr8, mono8, bayer patterns). |
+| **RoboDM reader** | Berkeley's compression-optimized format achieving up to 70x compression. Uses EBML container with video codecs (H.264/H.265/AV1/FFV1). Each `.vla` file is one trajectory. | MEDIUM | Depends on `robodm` library internals -- EBML parsing + FFmpeg for video streams. May need to implement EBML reader in Rust or shell out to FFmpeg for the video stream extraction. | Reuses FFmpeg pipeline from v1.0 for video stream decode. |
+| **GR00T reader** | NVIDIA Isaac GR00T N1 uses LeRobot v2-compatible format with NVIDIA-specific metadata (robot type identifiers like GR1ArmsOnly, SO100DualArm; `annotation.human.*` fields; motor naming convention). Detection is metadata-based, data reading delegates to LeRobot v2 reader. | LOW | Same as LeRobot v2. Detection logic reads `meta/info.json` and checks `robot_type` against known NVIDIA identifiers and `annotation.human.*` fields in `features`. | Requires LeRobot v2 reader. GR00T is a thin wrapper that overrides format detection and metadata extraction. |
+
+#### Format Writers (6 new formats)
+
+| Feature | Why Expected | Complexity | Rust Crate Dependency | Pipeline Dependency |
+|---------|--------------|------------|----------------------|---------------------|
+| **RLDS/TFRecord writer** | Second most important output after LeRobot v3. Required for Open-X Embodiment, Octo fine-tuning, OpenVLA training. Must produce `dataset_info.json`, `features.json`, and sharded TFRecord files. | MEDIUM | `tfrecord` crate for writing + `prost` for protobuf serialization. Must produce valid tf.train.Example protos with nested `steps/observation/*`, `steps/action`, `steps/reward`, `steps/is_first/is_last/is_terminal` structure. Images encoded as JPEG bytes in `bytes_list`. | None -- standalone writer. |
+| **HDF5 writer** | Enables round-trip HDF5->LeRobot->HDF5 conversion. Robomimic users who convert to LeRobot for training may want to export back. | MEDIUM | `hdf5` crate for writing. Must produce valid robomimic layout: `/data/demo_N/actions`, `/data/demo_N/obs/*`, `/data/demo_N/rewards`, `/mask/train` + `env_args` attribute. | Requires `hdf5` crate (same as reader). |
+| **Zarr writer** | Enables Zarr output for Diffusion Policy/UMI users. Must produce valid chunked arrays with `episode_ends` metadata and Blosc compression. | MEDIUM | `zarrs` crate for writing. Must configure appropriate chunk sizes (e.g., (1, 224, 224, 3) for images, (100, action_dim) for actions). Blosc compression with LZ4 or Zstd codec. | Requires `zarrs` crate (same as reader). |
+| **ROS bag writer (MCAP)** | Enables conversion to ROS-compatible format for replay or sim-to-real pipelines. Write MCAP format only (modern, self-contained). ROS 1 `.bag` writing is not worth the complexity. | MEDIUM | `mcap` crate for writing. Must produce valid `sensor_msgs/Image` messages for camera data, `sensor_msgs/JointState` for robot state, custom action messages. Requires ROS message schema embedding in MCAP. | None -- standalone writer. |
+| **LeRobot v2 writer** | Enables backwards compatibility for tools that only read v2. GR00T N1 training pipeline expects v2 format. | LOW | Same as v3 writer (Parquet + MP4). Differences: one Parquet per episode, different `info.json` schema with `features` dict, `codebase_version: "2.0"`, `episodes.jsonl` metadata. | Reuses Parquet and MP4 writing from v1.0. |
+| **RoboDM writer** | Enables high-compression output (up to 70x). Useful for archival and storage-constrained environments. | HIGH | EBML writing + FFmpeg for video codec encoding. Python version uses `robodm.Trajectory` API. Rust implementation needs either: (a) pure-Rust EBML writer + FFmpeg, or (b) C FFI to `robodm` library. | Reuses FFmpeg pipeline for video encoding. EBML format needs dedicated implementation. |
+
+#### CLI Expansion
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| **Multi-format reading** (RLDS, LeRobot v2/v3, HDF5, Zarr, ROS bags, RoboDM, GR00T) | Core product identity. Users have datasets in these formats. Without reading them, the tool is useless. | HIGH | 8 format readers. Each has unique file layout, schema, and dependencies. RLDS/TFRecord is the hardest (protobuf + TF-specific encoding). HDF5 needs `hdf5-rs` bindings. Zarr is chunked arrays. ROS bags need MCAP parsing. |
-| **LeRobot v3 writing** | Primary conversion target for the entire robotics ML community (SmolVLA, LeRobot, fine-tuning workflows). 80%+ of conversions end here. | HIGH | Parquet via `arrow-rs` + MP4 H.264 video encoding via ffmpeg bindings. Must produce bit-compatible schema with Python Forge output. |
-| **RLDS writing** | Second most important output for Open-X Embodiment, Octo, OpenVLA fine-tuning workflows. | MEDIUM | TFRecord serialization. Fewer users than LeRobot but critical for the Google robotics ecosystem. |
-| **Format auto-detection** | Users expect `forge inspect ./data` to just work without specifying format. Every competitor does this. | LOW | Check filesystem structure signatures (e.g., `.parquet` + `meta/info.json` = LeRobot v3, `.tfrecord` = RLDS). Already O(N) in Python; Rust can do O(1) with parallel probing. |
-| **Dataset inspection** (schema, cameras, fields, stats) | First thing a user does with an unfamiliar dataset. LeRobot has `lerobot-edit-dataset`, ARES has dataset exploration. Without inspection, users cannot plan conversions. | MEDIUM | Read metadata + sample episodes, infer schema, FPS, camera info, field mappings. Must support JSON and human-readable output. |
-| **YAML-based conversion config** | Complex conversions need camera remapping, field mapping, FPS override. CLI flags alone are insufficient for 8-camera setups. | LOW | `serde_yaml` deserialization to config structs. Auto-generation from inspection (like `forge inspect --generate-config`). |
-| **Field and camera name remapping** | Source formats use different naming conventions (e.g., `steps/observation/image` vs `observation.images.front`). Without remapping, conversions produce unusable output. | MEDIUM | String-based mapping in config. Must handle nested path formats across different format conventions. |
-| **HuggingFace Hub download** | Primary distribution mechanism for robotics datasets. LeRobot, OpenVLA, DROID all live on HF Hub. | MEDIUM | HTTP-based download via `hf://` URL scheme. Needs auth token support for gated repos, caching to avoid re-downloads. Use `reqwest` + custom HF API client (no Python `huggingface_hub` SDK available in Rust). |
-| **CLI with subcommands** (inspect, convert, quality, filter, visualize, hub, formats, export-video, stats) | Python Forge established this command surface. Users have muscle memory and scripts. | MEDIUM | `clap` derive macros. Must match Python Forge's subcommand names and core flag semantics. |
-| **Progress reporting** | Conversions of large datasets (DROID: 76K episodes, NVIDIA Physical AI: 320K trajectories) take hours. Silent tools get killed by impatient users. | LOW | Progress bars via `indicatif`. Episode count, ETA, throughput (episodes/sec, MB/sec). |
-| **Parallel episode processing** | Python Forge already does this (albeit with GIL overhead). Single-threaded conversion of large datasets is unacceptably slow. | MEDIUM | `rayon` work-stealing thread pool. Zero serialization overhead (shared memory). This is table stakes because Python Forge already has it, but the Rust implementation will be dramatically better. |
-| **Quality analysis** (8 metrics: LDLJ smoothness, dead actions, gripper chatter, static detection, timestamp regularity, action saturation, action entropy, composite score) | Python Forge's quality system is a key differentiator that became expected. Users rely on `forge quality` to audit datasets before training. Without it, the Rust rewrite loses a major feature. | HIGH | 8 numerical metrics operating on action/state arrays. Composite weighted scoring. Must produce identical scores to Python Forge for user trust. Use `ndarray` + SIMD where beneficial. |
-| **Episode filtering by quality** | Natural next step after quality analysis. `forge filter --min-quality 6.0` is documented in Python Forge's recommendations. Users follow this workflow. | MEDIUM | Depends on quality analysis. Read-evaluate-write pipeline with dry-run support. |
-| **Error handling with continuation** | Robotics datasets are messy. Corrupt episodes, missing frames, schema mismatches. `--fail-on-error` vs continue-and-report is expected. | LOW | Per-episode error capture with summary. Rust's `Result` type makes this natural. |
-| **Video encoding** (H.264 MP4) | LeRobot v3 stores camera data as MP4 files. Without video encoding, the primary conversion target is impossible. | HIGH | FFmpeg bindings (`ffmpeg-sys-next` or `video-rs`). H.264 encoding with configurable CRF/preset. Must handle RGB frame arrays to compressed video. |
+| **`forge inspect`** | First command users run on any dataset. Must auto-detect format, show schema (fields, cameras, dtypes, shapes), episode/frame counts, FPS, robot type. Output as human-readable table and JSON. | MEDIUM | Calls format reader's `inspect()` method. Needs rich terminal output (tables with column alignment). Existing `DatasetInfo` struct has all needed fields. |
+| **`forge quality`** | Run quality analysis on a dataset. Show per-episode scores, composite score, flag distribution. Export to JSON. | LOW | Already implemented in v1.0 as library. Needs CLI subcommand wiring with `clap`. |
+| **`forge filter`** | Filter episodes by quality threshold, output filtered dataset. Dry-run mode shows what would be kept/removed without writing. | LOW | Already implemented in v1.0. Needs CLI subcommand. |
+| **`forge hub download`** | Download dataset from HuggingFace Hub. `forge hub download lerobot/pusht` or `forge hub download hf://lerobot/pusht`. Auth via `HF_TOKEN` env var or `~/.huggingface/token`. | MEDIUM | HTTP client (`reqwest`). HF Hub API: `snapshot_download` equivalent via REST. Must handle gated repos, caching, resume. |
+| **`forge hub upload`** | Upload dataset to HuggingFace Hub. Create repo, upload files with LFS for large files, create commit. | HIGH | HF Hub REST API: create_repo, create_commit with CommitOperationAdd. LFS pre-upload for files > 10MB. Multipart upload for large files. Auth required. |
+| **`forge stats`** | Show dataset statistics: per-field min/max/mean/std, episode length distribution, camera resolution summary, action space bounds. | MEDIUM | Streams through episodes computing running statistics. `ndarray` for numerical operations. |
+| **`forge export-video`** | Export episode camera streams as standalone MP4 files for review or presentation. Optional overlay with action/state plots. | MEDIUM | Reuses FFmpeg encode pipeline from v1.0. Needs frame composition (multiple cameras side-by-side) and optional text overlay. |
+| **`forge visualize`** | Interactive terminal-based dataset viewer. Browse episodes, scrub through frames, view camera images as ASCII art or in a small window. | HIGH | For terminal: `ratatui` + `crossterm` for TUI. Image display options: (a) sixel protocol for terminals that support it, (b) ASCII art fallback, (c) spawn external image viewer. |
+
+#### HuggingFace Hub Integration
+
+| Feature | Why Expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| **Download with caching** | Datasets live on HF Hub. `forge hub download lerobot/pusht` must cache to `~/.cache/forge/datasets/` and avoid re-downloading. Resume interrupted downloads. | MEDIUM | `reqwest` for HTTP. HF Hub API: `GET /api/datasets/{repo_id}` for metadata, `GET /api/datasets/{repo_id}/tree/{revision}` for file listing, download individual files via CDN URL. Symlink-based caching like `huggingface_hub`. |
+| **Auth for gated repos** | Many robotics datasets are gated (DROID, certain NVIDIA datasets). Must support `HF_TOKEN` env var and `~/.huggingface/token` file. | LOW | Read token from env or file. Pass as `Authorization: Bearer {token}` header. Handle 401/403 with helpful error message. |
+| **Upload with LFS** | Users want `forge convert ./data output/ && forge hub upload org/dataset output/`. Must create repo if needed, upload files, handle LFS for large files (Parquet, MP4). | HIGH | HF Hub REST API flow: (1) `POST /api/repos/create` with `type: dataset`, (2) `POST /api/{repo_type}s/{repo_id}/preupload/{revision}` for LFS files, (3) `POST /api/{repo_type}s/{repo_id}/commit/{revision}` with operations list. Files > 10MB go through LFS pre-upload. New Xet backend is an alternative but LFS is the stable path. |
+| **URL scheme parsing** | Support `hf://org/repo`, `hf://org/repo@revision`, `huggingface://org/repo`, `https://huggingface.co/datasets/org/repo`. | LOW | Regex-based URL parsing. Already implemented in Python: strip scheme prefix, extract repo_id, optional revision after `@`, optional subset after `:`. |
+
+#### YAML Configuration
+
+| Feature | Why Expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| **Conversion config** | Complex conversions need field mapping (source field -> target field), camera remapping (source camera name -> target camera name), FPS override, target format options. | LOW | `serde_yaml` deserialization. Config struct with `field_mappings: HashMap<String, String>`, `camera_mappings: HashMap<String, String>`, `fps: Option<f64>`, `target_options: HashMap<String, Value>`. |
+| **Config auto-generation** | `forge inspect ./data --generate-config config.yaml` produces a starter config with all detected fields and cameras, pre-filled with identity mappings for the user to customize. | LOW | Serialize `DatasetInfo` fields/cameras into YAML template with comments. |
 
 ### Differentiators (Competitive Advantage)
 
-Features that set the Rust rewrite apart. These are the reasons to rewrite in Rust rather than optimizing the Python version.
+Features that justify the Rust rewrite over Python Forge for v2.0.
 
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| **Zero-copy video pipeline** | Python copies frame data 3-4 times per frame (NumPy -> PyAV -> encode). Rust can borrow frames through read->transform->encode chain. For video-heavy datasets (multiple cameras, 256x256+), this is the single biggest performance win. 2-5x speedup on video-heavy workloads. | HIGH | Requires careful lifetime management through the decode->transform->encode chain. `&[u8]` slices through the entire pipeline. FFmpeg's frame buffers need zero-copy handoff to encoder. |
-| **True thread parallelism** (rayon, no GIL) | Python's `ProcessPoolExecutor` serializes Episode objects via pickle across process boundaries, adding 60-70% overhead. Rust's rayon shares memory directly with work-stealing. For datasets with 1000+ episodes, this means 3-8x speedup on multi-core machines. | MEDIUM | `rayon::par_iter` over episodes. Thread-safe readers via `Send + Sync`. No serialization. Work-stealing balances uneven episode sizes automatically. |
-| **Single static binary** (no runtime dependencies) | Python Forge requires Python 3.10+, pip install, TensorFlow (2GB+), h5py, pyarrow, av, zarr. Installation is painful, version conflicts common. A single `forge` binary that works everywhere is a massive DX improvement. | LOW | Compile-time linking. Only system dependency is FFmpeg shared libs (or static link). `cargo install forge` or download binary from GitHub releases. |
-| **SIMD-accelerated quality metrics** | Quality analysis on large datasets (50K+ episodes) is CPU-bound in Python. Rust's `ndarray` with auto-vectorization and manual SIMD (`std::simd` or `packed_simd`) can compute LDLJ, entropy, and saturation 5-15x faster per episode. | MEDIUM | `ndarray` with BLAS for matrix ops. Compiler auto-vectorization handles most cases. Manual SIMD only needed for hot inner loops (jerk computation, histogram binning). |
-| **Streaming single-pass quality analysis with early exit** | Python Forge loads all frames into memory, then computes metrics. Rust can stream frames and compute metrics incrementally, exiting early when quality thresholds are clearly met/failed. Reduces memory from O(episode_length) to O(1) for quality-only workflows. | MEDIUM | Streaming accumulators for each metric. Running mean/variance for entropy. Early exit when composite score bounds are determined. |
-| **Lock-free chunked Parquet writing** | Python Forge converts Python dicts to Arrow via pyarrow, which involves Python object overhead. Rust's `arrow-rs` constructs Arrow buffers directly in native memory, with lock-free concurrent chunk writing. 3-5x faster Parquet output. | MEDIUM | `arrow-rs` `RecordBatch` construction directly from format readers. `parquet::arrow::AsyncArrowWriter` for concurrent chunk flushing. |
-| **Prefetching frame decoder with ring buffer** | For video-heavy formats (LeRobot v3 with MP4s), decode next episode's video while writing current episode. Hides I/O latency behind compute. | HIGH | Ring buffer with producer (decoder) and consumer (writer) threads. Bounded memory via ring size. Requires careful synchronization. |
-| **Cross-platform binary releases** (Linux x86_64/aarch64, macOS x86_64/aarch64, Windows x86_64) | Python Forge's platform support is limited by TensorFlow/h5py binary availability. A Rust binary works on any platform with a C toolchain. ARM Linux (Jetson, Raspberry Pi) support is particularly valuable for robotics edge devices. | MEDIUM | CI/CD with `cross` for cross-compilation. GitHub Actions matrix builds. Static linking where possible. ARM support is unique for robotics (Jetson Orin, Pi). |
-| **Bidirectional conversion for ALL formats** | Python Forge has limited writers (LeRobot v3, RLDS, RoboDM). Adding HDF5, Zarr, and ROS bag writing makes Forge the universal adapter. No other tool converts LeRobot -> HDF5 or Zarr -> ROS bag. | HIGH | 8 writers in addition to 8 readers. Each writer must produce valid format-specific output. HDF5 writing via `hdf5-rs`, Zarr writing via custom chunked array serialization, ROS bag writing via MCAP format. |
-| **HuggingFace Hub upload** (push datasets) | Python Forge only downloads. Users want to convert and publish in one step. `forge convert ./data output/ --push-to-hub org/dataset` is a workflow users request. | MEDIUM | HF Hub REST API for creating repos, uploading files, creating commits. Needs multipart upload for large files (LFS). `reqwest` HTTP client. |
-| **Lazy episode filtering** (metadata-only until filter decision) | Current filtering loads full episodes before deciding to keep/discard. With lazy evaluation, only load metadata (episode ID, frame count) for the filter decision, then load frames only for kept episodes. 5-10x faster filtering on large datasets where most episodes are discarded. | MEDIUM | Two-phase evaluation: metadata pass (cheap) then full-load pass (expensive). Requires format readers to support metadata-only mode. |
-| **Deterministic output** (bit-for-bit reproducible) | Given the same input and config, produce identical output bytes. Critical for ML reproducibility. Python Forge has floating-point and dict-ordering non-determinism. Rust's deterministic memory layout enables this. | LOW | Sorted field ordering in Parquet/metadata. Deterministic float formatting. Fixed random seeds. Reproducible video encoding (fixed FFmpeg flags). |
-| **Shell completions** | `clap` generates bash/zsh/fish completions for free. Small DX win that Python CLIs rarely provide. | LOW | `clap_complete` derive. Ship completions with binary or generate via `forge completions bash`. |
+| **Bidirectional conversion for ALL formats** | No other tool converts between all 8 formats bidirectionally. Python Forge only writes 3. This makes Forge the universal adapter: HDF5->LeRobot, Zarr->ROS bag, RLDS->HDF5, etc. | HIGH | 6 new writers (RLDS, HDF5, Zarr, MCAP, LeRobot v2, RoboDM) on top of existing LeRobot v3 writer. Each needs format-specific metadata generation and validation. |
+| **Native Rust Hub client (no Python SDK)** | Python `huggingface_hub` is 200MB+ with dependencies. Rust HTTP client is zero-overhead. Upload/download with resume support and progress bars built-in. | MEDIUM | `reqwest` + `tokio` for async HTTP. No external dependency. Single binary includes full Hub client. |
+| **Terminal-based dataset visualization** | ratatui TUI for browsing datasets without a GUI. Works over SSH, in containers, on headless servers -- environments where matplotlib/OpenCV viewers fail. | MEDIUM | `ratatui` + `crossterm` for TUI. Episode/frame navigation with keyboard controls. Sixel image output for supported terminals. Sparkline charts for action/state data. |
+| **Format auto-detection for ALL 8 inputs** | Registry probes all readers in priority order. Detection is O(1) per format (filesystem structure checks only, no data reading). | LOW | Each reader implements `can_read(&Path) -> bool` with cheap filesystem probes. Priority ordering prevents false positives (e.g., check GR00T before LeRobot v2, since GR00T is a superset). |
+| **Cross-platform binary releases** | Single `forge` binary for Linux (x86_64, aarch64), macOS (x86_64, aarch64), Windows (x86_64). ARM support is uniquely valuable for Jetson Orin / embedded robotics. | MEDIUM | GitHub Actions CI/CD with `cross` for cross-compilation. Static linking of libhdf5 and FFmpeg where possible. |
 
-### Anti-Features (Commonly Requested, Often Problematic)
-
-Features that seem good but create problems. Explicitly NOT building these.
+### Anti-Features (Explicitly NOT Building)
 
 | Feature | Why Requested | Why Problematic | Alternative |
 |---------|---------------|-----------------|-------------|
-| **Python bindings (PyO3)** | "I want to use Forge from Python scripts" | Reintroduces Python runtime dependency. Doubles maintenance surface. PyO3 adds compilation complexity. The whole point is escaping Python's GIL and serialization overhead. | Pure CLI with JSON output for scripting. Subprocess calls from Python: `subprocess.run(["forge", "convert", ...])`. If Python integration is truly needed, build it as a separate crate later (never in v1). |
-| **GPU-accelerated operations** | "Use CUDA for video encoding/decoding" | Adds NVIDIA dependency, breaks cross-platform promise, CUDA toolkit is 4GB+, most robotics datasets are CPU-bound on I/O not compute. GPU encoding quality is often worse than CPU at same bitrate. | CPU SIMD acceleration. FFmpeg's software encoders are excellent. If GPU is needed, users can pipe to `ffmpeg` with hardware acceleration externally. |
-| **Runtime format plugins** | "Let users add custom formats without recompiling" | Dynamic loading (`dlopen`) adds complexity, version compatibility nightmares, security concerns. Plugin API surface is hard to stabilize. Format count is small (< 15) and changes rarely. | Compile-time format registration via Rust traits. Submit PRs for new formats. Feature flags to exclude unused formats from binary. |
-| **Built-in training integration** | "Run training directly from Forge" | Scope creep. Training is a completely different domain (PyTorch, JAX, GPU clusters). Forge is a data tool, not a training framework. | Output datasets in the format training tools expect (LeRobot v3, RLDS). Let LeRobot/Octo/OpenVLA handle training. |
-| **Web-based visualization UI** | "Build a web dashboard for dataset exploration" | Massive scope increase (web server, frontend framework, WebSocket streaming). Existing tools (Foxglove, Rerun, ARES) do this better. Forge is a CLI tool. | Export videos via `forge export-video`. Use Rerun for 3D visualization. Use HuggingFace Spaces for web-based viewing. Keep CLI visualization (terminal-based or simple window). |
-| **Real-time ROS topic subscription** | "Stream live ROS topics into Forge" | Makes Forge a ROS node, requiring full ROS 2 dependency tree. Completely different architecture (streaming vs batch). | Read ROS bag files (batch). For live capture, use `rosbag2` to record bags first, then convert with Forge. |
-| **Database storage backend** | "Store datasets in PostgreSQL/DuckDB for querying" | Adds database dependency. Robotics datasets are file-based by convention. SQL queries over trajectory data are a niche use case. | Export metadata to JSON/Parquet for querying with DuckDB externally. Quality reports are already JSON-exportable. |
-| **Backwards compatibility with Python Forge config files** | "My existing YAML configs should work" | Python Forge's config schema has Python-specific idioms (None vs null, Python type names). Clean break enables better Rust-native config design. | Provide a migration guide. Auto-detect and warn about Python-format configs with suggested Rust equivalents. |
-| **Image augmentation pipeline** | "Apply transforms during conversion (crop, resize, color jitter)" | Scope creep into data augmentation territory. Training frameworks handle this in their dataloaders (better, with GPU). Baking augmentations into stored data reduces flexibility. | Support resize during conversion (practical need for storage). No color jitter, random crops, or augmentation. Let training pipelines handle augmentation at load time. |
+| **Full TensorFlow dependency for RLDS** | "RLDS needs TensorFlow for proper parsing" | TF is 2GB+, destroys single-binary goal. RLDS data is just TFRecord (protobuf) + metadata JSON. No TF-specific computation needed. | Parse TFRecord directly with `tfrecord` crate + `prost` protobuf. Parse `dataset_info.json` and `features.json` with `serde_json`. |
+| **Zarr Python compatibility layer** | "Use `zarr-python` for guaranteed compatibility" | Adds Python dependency. Zarr is just chunked arrays in directories. | Use `zarrs` Rust crate which supports Zarr V2/V3 spec directly. |
+| **ROS 1 .bag writing** | "Write legacy ROS 1 bags for old robots" | ROS 1 is EOL. The format is complex and underdocumented. MCAP is the future. | Write MCAP only. MCAP is readable by both ROS 1 (via bridge) and ROS 2 natively. |
+| **GUI visualization (matplotlib/OpenCV)** | "Interactive plots with mouse interaction" | Adds massive GUI dependencies (X11, GTK, Qt). Breaks headless/SSH use case. OpenCV alone is 200MB+. | Terminal TUI with ratatui. For rich visualization, export data and use Rerun/Foxglove/HF Spaces. `forge export-video` for visual review. |
+| **Python bindings (PyO3)** | "Call Forge from Python scripts" | Reintroduces Python runtime. Doubles maintenance. Defeats purpose of Rust rewrite. | CLI with JSON output for scripting: `forge inspect ./data --json | python process.py`. |
+| **robodm Python library dependency** | "Use robodm Python library for .vla read/write" | Adds Python dependency. The .vla format is EBML + video streams, which can be parsed natively. | Implement EBML parser in Rust. Use FFmpeg bindings for video stream extraction. |
+| **Image augmentation during conversion** | "Apply crop, resize, jitter during format conversion" | Scope creep. Training frameworks handle augmentation better (GPU-accelerated, at load time). Baking augmentations into stored data reduces flexibility. | Support resolution resize only (practical need). No color jitter, random crops. Training dataloaders handle augmentation. |
+
+## Format-Specific Conventions
+
+### RLDS/TFRecord Structure
+
+```
+dataset/
+  dataset_info.json          # TFDS metadata: splits, shardLengths, features
+  features.json              # TFDS feature specification (nested observation/action schema)
+  dataset-train.tfrecord-00000-of-00010  # Sharded TFRecord files
+  dataset-train.tfrecord-00001-of-00010
+  ...
+```
+
+**Key structure per episode (tf.train.Example):**
+- `steps/action` -- float_list, flattened (T * action_dim) values
+- `steps/observation/{field}` -- float_list for numeric, bytes_list for images (JPEG-encoded)
+- `steps/reward` -- float_list (T values)
+- `steps/is_first`, `steps/is_last`, `steps/is_terminal` -- int64_list (T boolean values)
+- `steps/language_instruction` -- bytes_list (T repeated UTF-8 strings)
+- `episode_metadata/file_path` -- bytes_list (single string, episode identifier)
+
+**Compression:** Per-shard, either uncompressed, GZIP, or ZLIB. Must try all three.
+
+**TFDS version directories:** Datasets may be at `path/` or `path/version/` (e.g., `path/1.0.0/`). Must check subdirectories.
+
+**Confidence:** HIGH -- verified against Python reader implementation and Open-X Embodiment documentation.
+
+### HDF5 Conventions
+
+**Layout 1: Robomimic (single file, multiple demos)**
+```
+file.hdf5
+  /data/
+    demo_0/
+      actions         (T, action_dim) float32
+      obs/
+        agentview_image (T, H, W, C) uint8
+        robot0_eef_pos  (T, 3) float32
+        robot0_joint_pos (T, 7) float32
+        ...
+      rewards         (T,) float32
+      dones           (T,) bool
+    demo_1/
+      ...
+  /mask/
+    train             [0, 1, 3, ...]  # episode indices for train split
+    valid             [2, 4, ...]
+  attrs:
+    env_args          JSON string with env_kwargs.robots, env_kwargs.control_freq
+    total             int (total frames across all demos)
+```
+
+**Layout 2: ACT/ALOHA (one file per episode)**
+```
+episode_0.hdf5
+  /action             (T, action_dim) float32
+  /observations/
+    images/
+      cam_high        (T, H, W, C) uint8
+      cam_left_wrist  (T, H, W, C) uint8
+      cam_right_wrist (T, H, W, C) uint8
+    qpos              (T, state_dim) float32
+    qvel              (T, state_dim) float32
+```
+
+**Detection logic:** Check for `/data/demo_*` groups (robomimic) vs `/action` or `/observations` at root (ALOHA). Some ALOHA variants have `images/` and `qpos` at root level.
+
+**Image detection:** By key name (contains "image", "rgb", "camera") OR by shape (4D with last dim in [1, 3, 4]) AND dtype uint8.
+
+**Confidence:** HIGH -- verified against Python HDF5Reader and robomimic documentation.
+
+### Zarr Layout (Diffusion Policy/UMI)
+
+```
+dataset.zarr/
+  .zgroup                    # Zarr V2 group marker
+  data/
+    camera0_rgb/
+      .zarray                # shape: (total_frames, H, W, C), chunks: (1, H, W, C)
+      0.0.0.0                # Blosc-compressed chunks
+      ...
+    robot0_eef_pos/
+      .zarray                # shape: (total_frames, 3)
+      0.0                    # Blosc-compressed chunks
+    action/
+      .zarray                # shape: (total_frames, action_dim)
+      ...
+  meta/
+    episode_ends/
+      .zarray                # shape: (num_episodes,) int64
+      0                      # [end_idx_0, end_idx_1, ...] cumulative
+  attrs: {fps, robot_type, total_episodes}
+```
+
+**Episode boundaries:** `meta/episode_ends` array contains cumulative end indices. Episode 0 is frames [0, episode_ends[0]), Episode 1 is [episode_ends[0], episode_ends[1]), etc.
+
+**Compression:** Blosc with LZ4 or Zstd codec. Images often use JpegXl compression. Chunk size is critical for performance -- typically (1, H, W, C) for images, (100, D) for scalar arrays.
+
+**Detection:** Check for `.zgroup` or `.zarray` files, or `.zarr` suffix. Also check for `data/` + `meta/` subdirectory structure.
+
+**Confidence:** HIGH -- verified against Python ZarrReader and UMI dataset structure.
+
+### ROS Bag Formats
+
+**ROS 1 .bag:**
+- Custom binary format with chunk/index structure
+- Messages serialized with ROS message serialization (not protobuf)
+- Two-layer index: chunk index at file end, message index per chunk
+- Compression: per-chunk (LZ4 or BZ2)
+- No embedded schemas -- requires message type definitions
+
+**ROS 2 MCAP:**
+- Self-contained format with embedded schemas
+- Append-only structure for crash resilience
+- Supports multiple serialization formats (ROS CDR, protobuf, JSON)
+- Chunk compression: LZ4 or Zstd
+- Optional summary section at end for fast random access
+- Default recording format since ROS 2 Iron (2023)
+
+**VLA-relevant topics:**
+- Images: `sensor_msgs/Image`, `sensor_msgs/CompressedImage` -- topics matching `*/image_raw`, `*/camera*/image*`
+- State: `sensor_msgs/JointState`, `geometry_msgs/PoseStamped` -- joint positions, end-effector poses
+- Actions: Topics matching `*/command`, `*/cmd`, `*/action`, `*/target*`
+- Excluded: `sensor_msgs/PointCloud2`, `tf2_msgs/TFMessage`, `sensor_msgs/LaserScan`, `sensor_msgs/CameraInfo`
+
+**Rosbags are typically single episodes.** No standard multi-episode convention -- each bag file is one recording session.
+
+**Confidence:** HIGH -- verified against Python RosbagReader and MCAP specification.
+
+### RoboDM .vla Format
+
+```
+dataset/
+  trajectory_000000.vla      # One file per episode (EBML container)
+  trajectory_000001.vla
+  ...
+```
+
+**Internal structure (per .vla file):**
+- `camera/rgb` -- video-compressed image stream (H.264/H.265/AV1/FFV1)
+- `camera/depth` -- optional depth stream
+- `robot/joint_positions` -- float array (T, joint_dim)
+- `robot/joint_velocities` -- float array
+- `action/joint_positions` -- float array (T, action_dim)
+- `action/gripper_action` -- float scalar array
+
+**Key parsing:** Hierarchical slash-separated keys. Categories detected by prefix: `camera/*` = images, `robot/*` = state, `action/*` = actions.
+
+**Compression:** EBML container with per-stream codec selection. Video streams use H.264/H.265/AV1. Non-video data uses byte-level compression. Up to 70x compression ratio (lossy), 3.5x (lossless).
+
+**Confidence:** MEDIUM -- based on Python reader analysis. EBML spec for .vla files is not publicly documented beyond the robodm GitHub repo.
+
+### GR00T Format
+
+GR00T N1 uses LeRobot v2-compatible format with these NVIDIA-specific markers in `meta/info.json`:
+
+- `robot_type` in: `{GR1ArmsOnly, GR1ArmsWaist, GR1FullBody, SO100DualArm, SO100SingleArm, BimanualPandaGripper, BimanualPandaHand, SinglePandaGripper, SinglePandaHand}`
+- `features` containing `annotation.human.validity`, `annotation.human.action.task_description`
+- State/action `names` arrays with `motor_0`, `motor_1`, ... naming convention
+- Additional `modality.json` defining modality config for GR00T training pipeline
+
+**Detection priority:** Must check for GR00T markers BEFORE LeRobot v2, since GR00T datasets match LeRobot v2 structure. Detection order in registry: GR00T -> LeRobot v3 -> LeRobot v2.
+
+**Data reading:** Delegates entirely to LeRobot v2 reader. Only format detection and metadata are GR00T-specific.
+
+**Confidence:** HIGH -- verified against Python GR00TReader and NVIDIA Isaac GR00T documentation.
+
+### HuggingFace Hub API
+
+**Download flow:**
+1. Resolve URL (`hf://org/repo`, `https://huggingface.co/datasets/org/repo`)
+2. `GET /api/datasets/{repo_id}` -- get repo metadata, verify existence
+3. `GET /api/datasets/{repo_id}/tree/{revision}` -- list all files
+4. Download each file from CDN: `https://huggingface.co/datasets/{repo_id}/resolve/{revision}/{path}`
+5. Cache in `~/.cache/forge/datasets/{repo_id}/snapshots/{revision}/`
+
+**Upload flow:**
+1. Create repo: `POST /api/repos/create` with `{type: "dataset", name: "repo_name", organization: "org"}`
+2. For each file > 10MB, pre-upload LFS: `POST /api/datasets/{repo_id}/preupload/{revision}`
+3. Create commit: `POST /api/datasets/{repo_id}/commit/{revision}` with operations array
+4. Operations: `CommitOperationAdd {path_in_repo, content_or_lfs_info}`
+
+**Authentication:** `Authorization: Bearer {token}` header. Token from `HF_TOKEN` env var or `~/.huggingface/token` file.
+
+**New Xet storage backend:** HuggingFace now uses Rust-based `hf_xet` for chunk-level deduplication. However, LFS is the stable, documented API path. Use LFS for v2.0, consider Xet in future.
+
+**Confidence:** MEDIUM -- based on HuggingFace documentation and Python client analysis. REST API details from OpenAPI spec need runtime verification.
+
+### Interactive Terminal Visualization
+
+**Expected capabilities:**
+- Episode browser: list episodes with metadata (length, cameras, quality score if available)
+- Frame scrubber: navigate frames within an episode with keyboard (arrow keys, j/k)
+- Camera image display: sixel protocol for compatible terminals (iTerm2, WezTerm, foot), ASCII art fallback
+- Action/state sparklines: show action dimensions as sparkline charts below image
+- Comparison mode: side-by-side view of source and converted datasets
+- Playback: auto-advance frames at dataset FPS with speed control (+/-)
+
+**Python reference implementation:** Uses matplotlib (TkAgg backend) and OpenCV for visualization. Both require GUI toolkit dependencies. Rust TUI avoids this entirely.
+
+**Keyboard controls (from Python cv_viewer):**
+- Space: Play/Pause
+- Left/Right arrows: Previous/Next frame
+- Up/Down arrows: Previous/Next episode
+- Q/Escape: Quit
+- +/-: Speed up/slow down
+
+**Confidence:** HIGH for feature expectations, MEDIUM for sixel image rendering (terminal support varies).
 
 ## Feature Dependencies
 
 ```
-[Format Auto-Detection]
-    └──requires──> [Format Readers (all)]
+[LeRobot v2 Reader]
+    (standalone, reuses v1.0 Parquet + MP4 pipeline)
 
-[Dataset Inspection]
+[GR00T Reader]
+    └──requires──> [LeRobot v2 Reader]
+
+[RLDS Reader]
+    (standalone, needs tfrecord + prost crates)
+
+[HDF5 Reader]
+    (standalone, needs hdf5 crate + libhdf5)
+
+[Zarr Reader]
+    (standalone, needs zarrs crate)
+
+[ROS Bag Reader]
+    (standalone, needs mcap crate + ROS 1 .bag parser)
+
+[RoboDM Reader]
+    (standalone, needs EBML parser + FFmpeg pipeline)
+
+[Format Auto-Detection (all 8)]
+    └──requires──> [All 7 new readers + existing LeRobot v3 reader]
+
+[forge inspect]
     └──requires──> [Format Auto-Detection]
-    └──requires──> [Format Readers (all)]
 
-[YAML Config Generation]
-    └──requires──> [Dataset Inspection]
-
-[Conversion Pipeline]
-    └──requires──> [Format Readers (all)]
-    └──requires──> [Format Writers (target)]
-    └──requires──> [Video Encoding] (for LeRobot v3 target)
-    └──requires──> [Field/Camera Remapping]
+[forge convert (full)]
+    └──requires──> [All readers]
+    └──requires──> [All writers]
     └──requires──> [YAML Config]
 
-[Quality Analysis]
-    └──requires──> [Format Readers (all)]
-    └──requires──> [Core Models (Episode/Frame)]
+[RLDS Writer]
+    (standalone, needs tfrecord + prost for serialization)
 
-[Episode Filtering]
-    └──requires──> [Quality Analysis]
-    └──requires──> [Format Writers (same format)]
+[HDF5 Writer]
+    └──requires──> [hdf5 crate]
 
-[HuggingFace Hub Download]
-    └──requires──> [HTTP Client]
+[Zarr Writer]
+    └──requires──> [zarrs crate]
 
-[HuggingFace Hub Upload]
-    └──requires──> [HTTP Client]
-    └──requires──> [Conversion Pipeline] (to produce uploadable output)
+[MCAP Writer]
+    └──requires──> [mcap crate]
 
-[Visualization]
-    └──requires──> [Format Readers (all)]
-    └──requires──> [Core Models (Episode/Frame)]
+[LeRobot v2 Writer]
+    (reuses v1.0 Parquet + MP4 pipeline)
 
-[Video Export]
-    └──requires──> [Format Readers (all)]
-    └──requires──> [Video Encoding]
+[RoboDM Writer]
+    └──requires──> [EBML writer + FFmpeg pipeline]
 
-[Parallel Processing]
-    └──enhances──> [Conversion Pipeline]
-    └──enhances──> [Quality Analysis]
+[Hub Download]
+    └──requires──> [reqwest HTTP client]
 
-[Zero-Copy Video Pipeline]
-    └──enhances──> [Conversion Pipeline]
-    └──requires──> [Video Encoding]
+[Hub Upload]
+    └──requires──> [reqwest HTTP client]
+    └──requires──> [Hub Download] (for URL parsing, auth logic)
 
-[SIMD Quality Metrics]
-    └──enhances──> [Quality Analysis]
+[forge visualize]
+    └──requires──> [Format Auto-Detection]
+    └──requires──> [ratatui + crossterm]
 
-[Streaming Quality with Early Exit]
-    └──enhances──> [Quality Analysis]
-    └──enhances──> [Episode Filtering]
+[forge export-video]
+    └──requires──> [Format Auto-Detection]
+    └──requires──> [FFmpeg encode pipeline from v1.0]
 
-[Lazy Episode Filtering]
-    └──enhances──> [Episode Filtering]
-    └──requires──> [Format Readers with metadata-only mode]
+[forge stats]
+    └──requires──> [Format Auto-Detection]
 
-[Prefetching Ring Buffer]
-    └──enhances──> [Conversion Pipeline]
-    └──requires──> [Parallel Processing]
+[YAML Config + Generation]
+    └──requires──> [forge inspect]
 
-[Shell Completions]
-    └──requires──> [CLI Framework (clap)]
-
-[Bidirectional All Formats]
-    └──requires──> [Format Writers (HDF5, Zarr, ROS bag, LeRobot v2)]
-    └──conflicts──> [Fast initial release] (too much scope for v1)
+[Cross-Platform Releases]
+    └──requires──> [All features complete]
+    └──requires──> [CI/CD pipeline]
 ```
 
 ### Dependency Notes
 
-- **Conversion Pipeline requires Video Encoding:** LeRobot v3 is the primary target and it stores images as MP4. Without video encoding, the most important conversion path is broken.
-- **Quality Analysis requires Format Readers:** Quality metrics operate on action/state arrays extracted from episodes. The reader must produce Frame objects with loaded numerical data.
-- **Episode Filtering requires Quality Analysis AND Format Writers:** Filtering reads, evaluates, and writes. Both reader (for source) and writer (for same-format output) must exist.
-- **Bidirectional All Formats conflicts with Fast Release:** Writing 8 formats is HIGH complexity. Prioritize LeRobot v3 + RLDS writers first, add others incrementally.
-- **HF Hub Upload enhances Conversion:** The "convert and publish" workflow is the compelling use case, but upload can be added after core conversion works.
+- **GR00T requires LeRobot v2:** GR00T is a metadata wrapper, not a distinct format. Build LeRobot v2 first.
+- **Format auto-detection requires all readers:** Each reader's `can_read()` is called during detection. All readers must be registered before auto-detection works for all formats.
+- **Hub upload requires Hub download:** Shared URL parsing, auth logic, and HTTP client infrastructure.
+- **YAML config generation requires inspect:** Cannot generate field/camera mappings without inspecting the source dataset.
+- **Cross-platform releases are last:** All features must be stable before cutting release binaries. CI/CD is the final phase.
 
-## MVP Definition
+## MVP Definition (v2.0)
 
-### Launch With (v1)
+### Phase 1: Format Readers (build first)
 
-Minimum viable product -- what's needed for users to switch from Python Forge.
+All 7 new format readers. This is the foundation -- without reading all formats, nothing else works.
 
-- [ ] **Core models** (Episode, Frame, LazyArray, DatasetInfo) -- foundation everything depends on
-- [ ] **Format readers:** LeRobot v3, LeRobot v2, RLDS, HDF5, Zarr, ROS bags -- must read what users have
-- [ ] **Format writers:** LeRobot v3, RLDS -- covers 90%+ of conversion targets
-- [ ] **Format auto-detection** -- users expect `forge inspect ./data` to just work
-- [ ] **Dataset inspection** (schema, cameras, fields, JSON + text output) -- first command users run
-- [ ] **Conversion pipeline** with YAML config, field/camera remapping -- core product
-- [ ] **Video encoding** (H.264 MP4 for LeRobot v3) -- required for primary conversion target
-- [ ] **Parallel episode processing** via rayon -- already table stakes from Python Forge
-- [ ] **Quality analysis** (all 8 metrics, composite score, JSON export) -- key existing feature
-- [ ] **Episode filtering** by quality score and flags -- natural follow-on to quality
-- [ ] **HuggingFace Hub download** -- datasets live on the Hub
-- [ ] **CLI** with all subcommands (inspect, convert, quality, filter, hub, formats, stats, version) -- match Python surface
-- [ ] **Progress reporting** -- non-negotiable for long-running conversions
-- [ ] **Error handling with continuation** -- robotics data is messy
+- [ ] **RLDS/TFRecord reader** -- largest dataset ecosystem
+- [ ] **LeRobot v2 reader** -- leverages existing Parquet+MP4 pipeline
+- [ ] **HDF5 reader** -- robomimic and ACT/ALOHA support
+- [ ] **Zarr reader** -- Diffusion Policy and UMI support
+- [ ] **ROS bag reader** -- ROS 1 .bag + ROS 2 MCAP
+- [ ] **RoboDM reader** -- Berkeley compression format
+- [ ] **GR00T reader** -- NVIDIA ecosystem (wrapper over LeRobot v2)
+- [ ] **Format auto-detection for all 8 formats**
 
-### Add After Validation (v1.x)
+### Phase 2: Format Writers (build second)
 
-Features to add once core is working and users are converting real datasets.
+6 new format writers, enabling bidirectional conversion.
 
-- [ ] **HuggingFace Hub upload** -- trigger: users asking "how do I publish my converted dataset?"
-- [ ] **Visualization** (terminal-based or simple window) -- trigger: users need to verify conversion output
-- [ ] **Video export** (`forge export-video`) -- trigger: users need demo videos from datasets
-- [ ] **Stats command** with distribution plots -- trigger: users doing dataset-level analysis
-- [ ] **RoboDM reader** -- trigger: Berkeley ecosystem adoption
-- [ ] **GR00T reader** -- trigger: NVIDIA Isaac ecosystem adoption
-- [ ] **Shell completions** -- low effort, ship when CLI is stable
-- [ ] **Deterministic output mode** -- trigger: reproducibility-focused users filing bugs about non-identical output
+- [ ] **RLDS writer** -- highest priority after LeRobot v3 (already shipped)
+- [ ] **HDF5 writer** -- robomimic layout
+- [ ] **Zarr writer** -- with Blosc compression
+- [ ] **MCAP writer** -- ROS 2 compatible
+- [ ] **LeRobot v2 writer** -- backwards compatibility + GR00T
+- [ ] **RoboDM writer** -- high-compression output
 
-### Future Consideration (v2+)
+### Phase 3: CLI and Hub
 
-Features to defer until product-market fit is established.
+Full CLI surface and HuggingFace Hub integration.
 
-- [ ] **Bidirectional all formats** (HDF5/Zarr/ROS bag writing) -- large scope, niche demand per format
-- [ ] **Prefetching ring buffer decoder** -- optimization for video-heavy workloads after profiling
-- [ ] **Lazy episode filtering** (metadata-only mode) -- optimization for large datasets
-- [ ] **SIMD-accelerated quality metrics** -- optimization after profiling shows quality is bottleneck
-- [ ] **Streaming quality with early exit** -- optimization for massive datasets
-- [ ] **Cross-platform binary releases** -- after CI/CD is mature
-- [ ] **Dataset splitting/merging** (like `lerobot-edit-dataset`) -- scope expansion after core is solid
+- [ ] **Full CLI** -- inspect, stats, export-video, hub download/upload, visualize
+- [ ] **Hub download with caching and auth**
+- [ ] **Hub upload with LFS**
+- [ ] **YAML config with auto-generation**
+
+### Phase 4: Visualization and Releases
+
+Terminal viewer and cross-platform distribution.
+
+- [ ] **Terminal dataset viewer** (ratatui TUI)
+- [ ] **Cross-platform binary releases** (Linux, macOS, Windows)
+- [ ] **Shell completions** (bash, zsh, fish)
 
 ## Feature Prioritization Matrix
 
 | Feature | User Value | Implementation Cost | Priority |
 |---------|------------|---------------------|----------|
-| Format readers (all 8) | HIGH | HIGH | P1 |
-| LeRobot v3 writer | HIGH | HIGH | P1 |
+| RLDS reader | HIGH | HIGH | P1 |
+| LeRobot v2 reader | HIGH | LOW | P1 |
+| HDF5 reader | HIGH | MEDIUM | P1 |
+| Zarr reader | HIGH | MEDIUM | P1 |
+| ROS bag reader | HIGH | HIGH | P1 |
+| RoboDM reader | MEDIUM | MEDIUM | P1 |
+| GR00T reader | MEDIUM | LOW | P1 |
+| Format auto-detection (all 8) | HIGH | LOW | P1 |
 | RLDS writer | HIGH | MEDIUM | P1 |
-| Format auto-detection | HIGH | LOW | P1 |
-| Dataset inspection | HIGH | MEDIUM | P1 |
-| Conversion pipeline | HIGH | HIGH | P1 |
-| Video encoding (H.264) | HIGH | HIGH | P1 |
-| YAML config + remapping | HIGH | LOW | P1 |
-| Parallel processing (rayon) | HIGH | MEDIUM | P1 |
-| Quality analysis (8 metrics) | HIGH | HIGH | P1 |
-| Episode filtering | HIGH | MEDIUM | P1 |
-| HF Hub download | HIGH | MEDIUM | P1 |
-| CLI (all subcommands) | HIGH | MEDIUM | P1 |
-| Progress reporting | MEDIUM | LOW | P1 |
-| Error continuation | MEDIUM | LOW | P1 |
-| Zero-copy video pipeline | HIGH | HIGH | P1 (core architecture) |
-| HF Hub upload | MEDIUM | MEDIUM | P2 |
-| Visualization | MEDIUM | MEDIUM | P2 |
-| Video export | MEDIUM | MEDIUM | P2 |
-| Stats command | MEDIUM | LOW | P2 |
-| Shell completions | LOW | LOW | P2 |
-| RoboDM/GR00T readers | MEDIUM | MEDIUM | P2 |
-| Deterministic output | MEDIUM | LOW | P2 |
-| Bidirectional all formats | MEDIUM | HIGH | P3 |
-| Prefetching ring buffer | MEDIUM | HIGH | P3 |
-| SIMD quality metrics | LOW | MEDIUM | P3 |
-| Streaming quality | LOW | MEDIUM | P3 |
-| Cross-platform releases | MEDIUM | MEDIUM | P3 |
-| Dataset split/merge | LOW | MEDIUM | P3 |
+| HDF5 writer | MEDIUM | MEDIUM | P1 |
+| Zarr writer | MEDIUM | MEDIUM | P1 |
+| MCAP writer | MEDIUM | MEDIUM | P1 |
+| LeRobot v2 writer | MEDIUM | LOW | P1 |
+| RoboDM writer | LOW | HIGH | P2 |
+| forge inspect | HIGH | MEDIUM | P1 |
+| forge stats | MEDIUM | MEDIUM | P2 |
+| forge export-video | MEDIUM | MEDIUM | P2 |
+| Hub download | HIGH | MEDIUM | P1 |
+| Hub upload | MEDIUM | HIGH | P2 |
+| YAML config + generation | HIGH | LOW | P1 |
+| Terminal visualization | MEDIUM | HIGH | P2 |
+| Cross-platform releases | HIGH | MEDIUM | P2 |
+| Shell completions | LOW | LOW | P3 |
 
 **Priority key:**
-- P1: Must have for launch -- without these, users cannot switch from Python Forge
-- P2: Should have, add when possible -- enhance the product after core works
-- P3: Nice to have, future consideration -- optimize or expand scope later
+- P1: Must ship in v2.0 -- core format breadth and conversion capability
+- P2: Should ship in v2.0 -- important but can be phased in after core
+- P3: Nice to have -- ship when time allows
 
-## Competitor Feature Analysis
+## Competitor Feature Analysis (v2.0 specific)
 
-| Feature | Python Forge | LeRobot tools | Robo-DM | ARES | Forge Rust (planned) |
-|---------|-------------|---------------|---------|------|---------------------|
-| Multi-format reading | 8 formats | LeRobot only | RLDS, HDF5, OXE | OXE (via RLDS) | 8 formats (parity) |
-| Multi-format writing | 3 formats (LR v3, RLDS, RoboDM) | LeRobot only | EBML (proprietary) | None (read-only) | 3 formats v1, 8 formats v2 |
-| Format auto-detection | Yes | No (assumes LeRobot) | Yes | No | Yes |
-| Quality analysis | 8 metrics, composite scoring | No | No | ML-based annotation | 8 metrics (parity), SIMD-accelerated |
-| Episode filtering | By quality score/flags | Delete by index | No | ML-based curation | By quality score/flags (parity) |
-| Visualization | Matplotlib + OpenCV | Rerun/HF Spaces | ROS 2 replay | Web dashboard | Terminal + simple window |
-| HF Hub integration | Download only | Full (native) | No | Upload annotations | Download + Upload |
-| Video encoding | H.264 via PyAV | H.264 via PyAV | Multi-codec (H.264/H.265/AV1/FFV1) | No | H.264 via FFmpeg (zero-copy) |
-| Compression ratio | Standard (Parquet + MP4) | Standard | 18-73x (EBML + codecs) | N/A | Standard (match Parquet + MP4) |
-| Performance | GIL-limited multiprocessing | Single-process | 50x faster decode than LeRobot | Cloud API-based | 5-15x faster than Python Forge |
-| Installation | pip install (TF+h5py+pyarrow = 3GB+) | pip install (PyTorch = 2GB+) | pip install | Docker + cloud APIs | Single binary (< 50MB) |
-| Cross-platform | Linux/macOS (Windows partial) | Linux/macOS | Linux/macOS | Web-based | Linux/macOS/Windows + ARM |
-| Config system | YAML | Python API | Python API | Web UI | YAML (Rust-native) |
-| Dataset editing | No | Split/merge/delete episodes | No | Annotation editing | Future (v2) |
+| Feature | Python Forge | LeRobot tools | Robo-DM | Forge Rust v2.0 |
+|---------|-------------|---------------|---------|-----------------|
+| Format readers | 8 formats | LeRobot only | RLDS, HDF5, OXE | 8 formats (parity) |
+| Format writers | 3 (LR v3, RLDS, RoboDM) | LeRobot only | EBML only | 7 (LR v3, RLDS, HDF5, Zarr, MCAP, LR v2, RoboDM) |
+| Bidirectional | Partial (3 of 8 writable) | No | EBML-centric | Full (all formats read+write) |
+| Hub download | Yes (via huggingface_hub) | Native | No | Yes (native Rust HTTP) |
+| Hub upload | No | Native | No | Yes (REST API) |
+| Visualization | matplotlib + OpenCV (GUI) | Rerun/HF Spaces | No | Terminal TUI (no GUI deps) |
+| Installation | pip (TF+h5py = 3GB+) | pip (PyTorch = 2GB+) | pip | Single binary (< 50MB) |
+| ARM support | Partial (TF ARM builds fragile) | No | No | Full (aarch64 Linux + macOS) |
+| Cross-platform | Linux/macOS | Linux/macOS | Linux/macOS | Linux/macOS/Windows |
 
 ## Sources
 
-- [Forge Python codebase](https://github.com/arpitg1304/forge) -- existing feature analysis, architecture review (HIGH confidence, direct code reading)
-- [LeRobotDataset v3.0 blog](https://huggingface.co/blog/lerobot-datasets-v3) -- LeRobot format details and tools (HIGH confidence, official HuggingFace source)
-- [LeRobot Dataset Tools](https://huggingface.co/docs/lerobot/en/using_dataset_tools) -- `lerobot-edit-dataset` features (HIGH confidence, official docs)
-- [Robo-DM paper (ICRA 2025)](https://arxiv.org/abs/2505.15558) -- compression ratios, performance benchmarks (HIGH confidence, peer-reviewed)
-- [ARES platform](https://a16z.com/ares-an-open-source-platform-for-robot-data/) -- ML-driven dataset curation features (MEDIUM confidence, blog post)
-- [Apache Arrow Rust](https://github.com/apache/arrow-rs) -- Parquet/Arrow Rust capabilities (HIGH confidence, official repo)
-- [hdf5-rust](https://github.com/aldanor/hdf5-rust) -- HDF5 Rust bindings capabilities (HIGH confidence, crate docs)
-- [rsmpeg](https://github.com/larksuite/rsmpeg) -- FFmpeg Rust bindings for video (MEDIUM confidence, third-party crate)
-- [Open-X Embodiment](https://robotics-transformer-x.github.io/) -- RLDS format and dataset ecosystem (HIGH confidence, official project)
-- [Foxglove](https://foxglove.dev/) and [Rerun](https://www.reduct.store/blog/comparison-rviz-foxglove-rerun) -- Robotics visualization landscape (MEDIUM confidence, product sites)
-- [LeRobot Dataset Manipulation Tools](https://deepwiki.com/huggingface/lerobot/2.3-dataset-management) -- Community-driven dataset tools development (MEDIUM confidence, community wiki)
-- [NVIDIA Physical AI Dataset](https://blogs.nvidia.com/blog/open-physical-ai-dataset/) -- Scale of modern robotics datasets (HIGH confidence, official NVIDIA)
+- [Python Forge codebase](forge/formats/) -- direct analysis of all 8 format readers, 3 writers, hub client, and visualization code (HIGH confidence)
+- [Open-X Embodiment](https://github.com/google-deepmind/open_x_embodiment) -- RLDS format structure (HIGH confidence)
+- [robomimic documentation](https://robomimic.github.io/docs/datasets/overview.html) -- HDF5 key structure (HIGH confidence)
+- [UMI Robot Dataset](https://umi-data.github.io/) -- Zarr layout for Diffusion Policy (HIGH confidence)
+- [MCAP specification](https://mcap.dev/guides) -- ROS 2 bag format (HIGH confidence)
+- [MCAP vs ROS 1 Bag](https://foxglove.dev/blog/mcap-vs-ros1-bag-index-performance) -- Format comparison (HIGH confidence)
+- [Robo-DM paper (ICRA 2025)](https://arxiv.org/abs/2505.15558) -- .vla format and compression (MEDIUM confidence)
+- [NVIDIA Isaac GR00T](https://github.com/NVIDIA/Isaac-GR00T) -- GR00T format spec (HIGH confidence)
+- [HuggingFace Hub API](https://huggingface.co/docs/hub/api) -- REST API for upload/download (MEDIUM confidence)
+- [HuggingFace Upload docs](https://huggingface.co/docs/huggingface_hub/guides/upload) -- LFS and commit flow (HIGH confidence)
+- [tfrecord crate](https://lib.rs/crates/tfrecord) -- Rust TFRecord parser (HIGH confidence)
+- [hdf5 crate](https://docs.rs/hdf5) -- Rust HDF5 bindings (HIGH confidence)
+- [zarrs crate](https://zarrs.dev/) -- Rust Zarr V2/V3 (HIGH confidence)
+- [mcap crate](https://crates.io/crates/mcap) -- Rust MCAP reader/writer (HIGH confidence)
+- [ratatui](https://ratatui.rs/) -- Rust TUI framework (HIGH confidence)
 
 ---
-*Feature research for: Robotics dataset conversion CLI (Forge Rust rewrite)*
+*Feature research for: Forge Rust v2.0 -- Format Breadth & Distribution*
 *Researched: 2026-02-21*
