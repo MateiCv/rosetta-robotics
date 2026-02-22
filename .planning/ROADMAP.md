@@ -54,11 +54,13 @@ Plans:
   2. HDF5 output datasets are loadable by `h5py` with correct compound types, and Zarr output datasets are loadable by Python `zarr` library
   3. ROS bag output files (ROS 2 MCAP format) are playable by ROS 2 tools, and LeRobot v2 output datasets are loadable by older LeRobot tooling
   4. A round-trip test (format A -> LeRobot v3 -> format A) preserves data within expected precision bounds for each writable format
-**Plans**: TBD
+**Plans**: 4 plans
 
 Plans:
-- [ ] 06-01: TBD
-- [ ] 06-02: TBD
+- [ ] 06-01-PLAN.md — RLDS/TFRecord writer + LeRobot v2 writer
+- [ ] 06-02-PLAN.md — HDF5 writer + Zarr writer
+- [ ] 06-03-PLAN.md — ROS bag (MCAP) writer + RoboDM (EBML) writer
+- [ ] 06-04-PLAN.md — Registry wiring + round-trip integration tests
 
 ### Phase 7: CLI, Configuration, and Hub Download
 **Goal**: Users interact with Forge through a complete CLI with all subcommands, YAML-driven configuration, and HuggingFace Hub dataset downloading
@@ -104,6 +106,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 | 3. Parallel Pipeline and Error Handling | v1.0 | 4/4 | Complete | 2026-02-22 |
 | 4. Quality Analysis and Filtering | v1.0 | 4/4 | Complete | 2026-02-22 |
 | 5. Remaining Format Readers | Next | Complete    | 2026-02-22 | 2026-02-22 |
-| 6. Remaining Format Writers | Next | 0/? | Not started | - |
+| 6. Remaining Format Writers | Next | 0/4 | Not started | - |
 | 7. CLI, Configuration, and Hub Download | Next | 0/? | Not started | - |
 | 8. Hub Upload, Visualization, and Distribution | Next | 0/? | Not started | - |
