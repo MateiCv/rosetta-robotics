@@ -10,3 +10,6 @@ repository.workspace = true
 [dependencies]
 ffmpeg-next.workspace = true
 forge-core.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
