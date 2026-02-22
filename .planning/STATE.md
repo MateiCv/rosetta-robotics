@@ -10,10 +10,10 @@ See: .planning/PROJECT.md (updated 2026-02-21)
 ## Current Position
 
 Milestone: v2.0 Format Breadth & Distribution
-Phase: 05-remaining-format-readers
-Current Plan: 8 of 8 (Phase Complete)
-Status: Phase Complete
-Last activity: 2026-02-22 — Completed 05-08 (Format Registry Integration)
+Phase: 05-remaining-format-readers — SHIPPED
+Current Plan: 8 of 8 (Phase Complete + UAT Passed)
+Status: Phase Shipped
+Last activity: 2026-02-22 — UAT passed (10/11, 1 skipped), 318 tests green
 
 ## Performance Metrics
 
@@ -88,5 +88,6 @@ Key items:
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Completed 05-08-PLAN.md (Format Registry Integration) - Phase 05 Complete
-Resume file: .planning/phases/05-remaining-format-readers/05-08-SUMMARY.md
+Stopped at: Phase 05 shipped — UAT complete, all tests green
+Next: Phase 06 (Remaining Format Writers)
+Resume file: .planning/ROADMAP.md
