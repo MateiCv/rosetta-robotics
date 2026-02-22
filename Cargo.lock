@@ -780,6 +780,7 @@ name = "forge-quality"
 version = "0.1.0"
 dependencies = [
  "forge-core",
+ "forge-formats",
  "pulp",
  "serde",
  "serde_json",

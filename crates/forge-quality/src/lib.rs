@@ -18,6 +18,7 @@
 pub mod analyzer;
 pub mod config;
 pub mod early_exit;
+pub mod filter;
 pub mod metrics;
 pub mod models;
 pub mod simd;
@@ -25,5 +26,6 @@ pub mod simd;
 // Re-export key types for convenience.
 pub use analyzer::QualityAnalyzer;
 pub use config::{FilterConfig, QualityConfig};
+pub use filter::FilterEngine;
 pub use metrics::{MetricKind, MetricResult};
 pub use models::{EpisodeQuality, FilterResult, MetricScore, QualityReport};
