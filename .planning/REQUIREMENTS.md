@@ -10,7 +10,7 @@ Requirements for v2.0 milestone. Each maps to roadmap phases 5-8.
 
 ### Format Reading
 
-- [ ] **READ-01**: Reader detects and reads RLDS/TFRecord datasets (Open-X Embodiment) without TensorFlow dependency
+- [x] **READ-01**: Reader detects and reads RLDS/TFRecord datasets (Open-X Embodiment) without TensorFlow dependency
 - [ ] **READ-02**: Reader detects and reads LeRobot v2 datasets (Parquet-based)
 - [ ] **READ-04**: Reader detects and reads HDF5 datasets (robomimic, ACT/ALOHA formats)
 - [ ] **READ-05**: Reader detects and reads Zarr datasets (Diffusion Policy, UMI) including Zarr v2 with Blosc compression
@@ -97,7 +97,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| READ-01 | Phase 5 | Pending |
+| READ-01 | Phase 5 | Complete |
 | READ-02 | Phase 5 | Pending |
 | READ-04 | Phase 5 | Pending |
 | READ-05 | Phase 5 | Pending |
