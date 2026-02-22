@@ -72,7 +72,7 @@ Plans:
 - [x] 03-01-PLAN.md -- Zero-copy video frames (Bytes), new dependencies, ConversionConfig extensions, EpisodeFailure type
 - [x] 03-02-PLAN.md -- Parallel rayon Converter with ErrorCollector, deterministic mode, memory throttling
 - [x] 03-03-PLAN.md -- Progress reporting with memory tracking, prefetch pipeline, CLI flags, marker files
-- [ ] 03-04-PLAN.md -- Wire prefetch module into Converter write phase (gap closure: VID-04)
+- [x] 03-04-PLAN.md -- Wire prefetch module into Converter write phase (gap closure: VID-04)
 
 ### Phase 4: Quality Analysis and Filtering
 **Goal**: Users can analyze dataset quality with streaming metrics, filter episodes by quality scores, and export results for downstream tools
