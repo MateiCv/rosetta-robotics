@@ -43,7 +43,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **VID-01**: H.264 MP4 video encoder produces LeRobot v3-compatible videos with matching CRF, preset, profile, and pixel format
 - [x] **VID-02**: Video decoder reads MP4/video files from LeRobot v3 and other video-containing formats
 - [x] **VID-03**: Zero-copy video pipeline borrows frames through read-transform-encode chain without intermediate allocations
-- [ ] **VID-04**: Prefetching frame decoder uses ring buffer to decode next episode's video while writing current episode
+- [x] **VID-04**: Prefetching frame decoder uses ring buffer to decode next episode's video while writing current episode
 - [x] **VID-05**: Video frame count in Parquet timestamp column exactly matches frames in MP4 files (no off-by-one errors)
 - [x] **VID-06**: Keyframes forced at episode boundaries in multi-episode MP4 files for deterministic seeking
 
@@ -80,7 +80,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **CLI-11**: `forge version` shows version, build info, and FFmpeg availability
 - [ ] **CLI-12**: YAML-based conversion config supports field mapping, camera remapping, FPS override, and quality thresholds
 - [ ] **CLI-13**: `forge inspect --generate-config` auto-generates YAML config from dataset inspection
-- [ ] **CLI-14**: Progress bars show episode count, ETA, throughput (episodes/sec), and memory usage for long conversions
+- [x] **CLI-14**: Progress bars show episode count, ETA, throughput (episodes/sec), and memory usage for long conversions
 - [ ] **CLI-15**: Shell completions generated for bash, zsh, and fish
 - [ ] **CLI-16**: Format auto-detection works for all 8 input formats without user-specified format hint
 
@@ -164,7 +164,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | VID-01 | Phase 2 | Complete |
 | VID-02 | Phase 2 | Complete |
 | VID-03 | Phase 3 | Complete |
-| VID-04 | Phase 3 | Pending |
+| VID-04 | Phase 3 | Complete |
 | VID-05 | Phase 2 | Complete |
 | VID-06 | Phase 2 | Complete |
 | QUAL-01 | Phase 4 | Pending |
@@ -195,7 +195,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CLI-11 | Phase 1 | Complete |
 | CLI-12 | Phase 7 | Pending |
 | CLI-13 | Phase 7 | Pending |
-| CLI-14 | Phase 3 | Pending |
+| CLI-14 | Phase 3 | Complete |
 | CLI-15 | Phase 7 | Pending |
 | CLI-16 | Phase 7 | Pending |
 | HUB-01 | Phase 7 | Pending |
