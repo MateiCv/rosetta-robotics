@@ -11,8 +11,11 @@
 //! - **[`models`]**: Serializable report and result types for JSON export.
 //! - **[`metrics`]**: Streaming [`MetricAccumulator`](metrics::MetricAccumulator) trait
 //!   and [`MetricKind`](metrics::MetricKind) enum.
+//! - **[`analyzer`]**: [`QualityAnalyzer`](analyzer::QualityAnalyzer) orchestrating
+//!   metrics across episodes with early exit and JSON export.
 //! - **[`simd`]**: SIMD-accelerated kernel functions (jerk, histogram, entropy, dot product).
 
+pub mod analyzer;
 pub mod config;
 pub mod early_exit;
 pub mod metrics;
@@ -20,6 +23,7 @@ pub mod models;
 pub mod simd;
 
 // Re-export key types for convenience.
+pub use analyzer::QualityAnalyzer;
 pub use config::{FilterConfig, QualityConfig};
 pub use metrics::{MetricKind, MetricResult};
 pub use models::{EpisodeQuality, FilterResult, MetricScore, QualityReport};
