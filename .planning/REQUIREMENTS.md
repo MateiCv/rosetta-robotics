@@ -9,7 +9,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Core Pipeline
 
-- [ ] **CORE-01**: System defines canonical Episode, Frame, LazyArray, LazyImage, and DatasetInfo data models shared across all formats
+- [x] **CORE-01**: System defines canonical Episode, Frame, LazyArray, LazyImage, and DatasetInfo data models shared across all formats
 - [ ] **CORE-02**: Conversion pipeline reads episodes from source format and writes to target format with configurable field/camera remapping
 - [ ] **CORE-03**: Pipeline processes episodes in parallel via rayon work-stealing thread pool with zero serialization overhead
 - [ ] **CORE-04**: Pipeline continues on per-episode errors by default, collecting failures for summary report (`--fail-on-error` to override)
@@ -77,7 +77,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **CLI-08**: `forge stats <path>` shows dataset statistics with distribution analysis
 - [ ] **CLI-09**: `forge export-video <path>` exports episodes as standalone video files
 - [ ] **CLI-10**: `forge visualize <path>` opens interactive dataset viewer
-- [ ] **CLI-11**: `forge version` shows version, build info, and FFmpeg availability
+- [x] **CLI-11**: `forge version` shows version, build info, and FFmpeg availability
 - [ ] **CLI-12**: YAML-based conversion config supports field mapping, camera remapping, FPS override, and quality thresholds
 - [ ] **CLI-13**: `forge inspect --generate-config` auto-generates YAML config from dataset inspection
 - [ ] **CLI-14**: Progress bars show episode count, ETA, throughput (episodes/sec), and memory usage for long conversions
@@ -89,7 +89,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **HUB-01**: Download datasets from HuggingFace Hub via `hf://` URL scheme with authentication for gated repos
 - [ ] **HUB-02**: Cache downloaded datasets locally to avoid re-downloads
 - [ ] **HUB-03**: Upload converted datasets to HuggingFace Hub including repo creation and Git LFS for large files
-- [ ] **HUB-04**: Single static binary with no runtime dependencies beyond system FFmpeg
+- [x] **HUB-04**: Single static binary with no runtime dependencies beyond system FFmpeg
 - [ ] **HUB-05**: Cross-platform binary releases for Linux x86_64, Linux aarch64, macOS x86_64, macOS aarch64, and Windows x86_64
 - [x] **HUB-06**: CI/CD pipeline with automated testing and binary release builds
 
@@ -139,7 +139,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CORE-01 | Phase 1 | Pending |
+| CORE-01 | Phase 1 | Complete |
 | CORE-02 | Phase 2 | Pending |
 | CORE-03 | Phase 3 | Pending |
 | CORE-04 | Phase 3 | Pending |
@@ -192,7 +192,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CLI-08 | Phase 7 | Pending |
 | CLI-09 | Phase 7 | Pending |
 | CLI-10 | Phase 7 | Pending |
-| CLI-11 | Phase 1 | Pending |
+| CLI-11 | Phase 1 | Complete |
 | CLI-12 | Phase 7 | Pending |
 | CLI-13 | Phase 7 | Pending |
 | CLI-14 | Phase 3 | Pending |
@@ -201,7 +201,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | HUB-01 | Phase 7 | Pending |
 | HUB-02 | Phase 7 | Pending |
 | HUB-03 | Phase 8 | Pending |
-| HUB-04 | Phase 1 | Pending |
+| HUB-04 | Phase 1 | Complete |
 | HUB-05 | Phase 8 | Pending |
 | HUB-06 | Phase 1 | Complete |
 | VIZ-01 | Phase 8 | Pending |

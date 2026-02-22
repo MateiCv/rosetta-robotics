@@ -12,7 +12,7 @@ Forge Rust rewrites the Python Forge dataset converter in Rust for 5-15x perform
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Core Types and Project Scaffolding** - Cargo workspace, canonical data models, CI pipeline, and binary skeleton
+- [x] **Phase 1: Core Types and Project Scaffolding** - Cargo workspace, canonical data models, CI pipeline, and binary skeleton
 - [ ] **Phase 2: LeRobot v3 End-to-End Pipeline** - Read and write LeRobot v3 datasets with H.264 video and Parquet, validating core architecture
 - [ ] **Phase 3: Parallel Pipeline and Error Handling** - Rayon parallelism, zero-copy video, error continuation, deterministic output, and progress reporting
 - [ ] **Phase 4: Quality Analysis and Filtering** - All quality metrics, streaming analysis, SIMD acceleration, episode filtering, and export
@@ -35,8 +35,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans:** 2 plans
 
 Plans:
-- [ ] 01-01-PLAN.md -- Cargo workspace, forge-core types, stub crates, and forge-cli version command
-- [ ] 01-02-PLAN.md -- GitHub Actions CI pipeline with FFmpeg and HDF5 linking validation
+- [x] 01-01-PLAN.md -- Cargo workspace, forge-core types, stub crates, and forge-cli version command
+- [x] 01-02-PLAN.md -- GitHub Actions CI pipeline with FFmpeg and HDF5 linking validation
 
 ### Phase 2: LeRobot v3 End-to-End Pipeline
 **Goal**: Users can convert a real robotics dataset to LeRobot v3 format and load the output successfully in Python's LeRobotDataset
@@ -160,7 +160,7 @@ Note: Phase 5 depends on Phase 2 (not Phase 4), so Phases 3-4 and Phase 5 could 
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Core Types and Project Scaffolding | 0/2 | Planning complete | - |
+| 1. Core Types and Project Scaffolding | 2/2 | Complete | 2026-02-22 |
 | 2. LeRobot v3 End-to-End Pipeline | 0/? | Not started | - |
 | 3. Parallel Pipeline and Error Handling | 0/? | Not started | - |
 | 4. Quality Analysis and Filtering | 0/? | Not started | - |
