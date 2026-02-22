@@ -58,6 +58,10 @@ Key decisions carried forward to PROJECT.md Key Decisions table.
 - [05-06] 10ms timestamp alignment window for grouping concurrent ROS messages into frames
 - [05-06] ROS 2 .db3 SQLite bags emit ReadWarning with conversion instructions instead of reading
 - [05-06] Unknown ROS message types stored as base64-encoded opaque metadata
+- [05-02] GR00TDetector at 0.95 confidence vs LeRobotV2Detector at 0.9 ensures GR00T wins priority for NVIDIA datasets
+- [05-02] V2InfoJson uses serde flatten to preserve unknown fields in dataset metadata for data fidelity
+- [05-02] GR00T reader delegates all reading to LeRobotV2Reader, only overriding format name and NVIDIA metadata
+- [05-02] NVIDIA robot_type detection is case-insensitive substring match against known identifiers
 
 ### Pending Todos
 
@@ -78,5 +82,5 @@ Key items:
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Completed 05-06-PLAN.md (ROS Bag Format Reader)
-Resume file: .planning/phases/05-remaining-format-readers/05-06-SUMMARY.md
+Stopped at: Completed 05-02-PLAN.md (LeRobot v2 & GR00T Readers)
+Resume file: .planning/phases/05-remaining-format-readers/05-02-SUMMARY.md
