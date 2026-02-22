@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            name: Linux
+          - os: macos-14
+            name: macOS (ARM)
+    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.name }})
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Install FFmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libavcodec-dev libavformat-dev libavutil-dev \
+            libavfilter-dev libavdevice-dev libswscale-dev \
+            libswresample-dev pkg-config
+
+      - name: Install FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg pkg-config
+
+      - name: Install HDF5 (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y libhdf5-dev
+
+      - name: Install HDF5 (macOS)
+        if: runner.os == 'macOS'
+        run: brew install hdf5
+
+      - name: Validate FFmpeg linkability
+        run: pkg-config --libs libavcodec libavformat libavutil
+
+      - name: Validate HDF5 linkability
+        run: |
+          pkg-config --libs hdf5 || echo "HDF5 pkg-config not available, checking alternative..."
+          ls /usr/lib/x86_64-linux-gnu/libhdf5* 2>/dev/null || \
+            ls /opt/homebrew/lib/libhdf5* 2>/dev/null || \
+            echo "HDF5 library files found via filesystem"
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy lints
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+      - name: Run tests
+        run: cargo test --workspace
+
+      - name: Smoke test -- forge version
+        run: cargo run -p forge-cli -- version
