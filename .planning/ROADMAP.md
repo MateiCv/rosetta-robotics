@@ -84,12 +84,13 @@ Plans:
   3. Quality analysis runs in streaming single-pass mode with O(1) memory per metric and terminates early when composite score bounds are determined
   4. Quality results are exportable as JSON for consumption by downstream tools
   5. SIMD-accelerated hot paths (jerk computation, histogram binning, entropy) show measurable speedup over scalar implementation
-**Plans**: TBD
+**Plans:** 4 plans
 
 Plans:
-- [ ] 04-01: TBD
-- [ ] 04-02: TBD
-- [ ] 04-03: TBD
+- [ ] 04-01-PLAN.md -- Crate scaffolding, config types, data models, MetricAccumulator trait, SIMD kernels
+- [ ] 04-02-PLAN.md -- All 7 streaming metric accumulators (smoothness, dead actions, chatter, static, timestamps, saturation, entropy)
+- [ ] 04-03-PLAN.md -- Composite score, early exit optimization, QualityAnalyzer orchestrator, JSON export
+- [ ] 04-04-PLAN.md -- FilterEngine with copy-only pipeline, dry-run mode, lazy pre-filtering
 
 ### Phase 5: Remaining Format Readers
 **Goal**: Users can read datasets from all 8 supported input formats without specifying format hints
@@ -166,7 +167,7 @@ Note: Phase 5 depends on Phase 2 (not Phase 4), so Phases 3-4 and Phase 5 could 
 | 1. Core Types and Project Scaffolding | 2/2 | Complete    | 2026-02-22 |
 | 2. LeRobot v3 End-to-End Pipeline | 0/4 | Complete    | 2026-02-22 |
 | 3. Parallel Pipeline and Error Handling | 3/4 | In progress | - |
-| 4. Quality Analysis and Filtering | 0/? | Not started | - |
+| 4. Quality Analysis and Filtering | 0/4 | Not started | - |
 | 5. Remaining Format Readers | 0/? | Not started | - |
 | 6. Remaining Format Writers | 0/? | Not started | - |
 | 7. CLI, Configuration, and Hub Download | 0/? | Not started | - |
