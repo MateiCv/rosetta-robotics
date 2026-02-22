@@ -14,6 +14,7 @@
 //! - **[`simd`]**: SIMD-accelerated kernel functions (jerk, histogram, entropy, dot product).
 
 pub mod config;
+pub mod early_exit;
 pub mod metrics;
 pub mod models;
 pub mod simd;

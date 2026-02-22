@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::QualityConfig;
 
 pub mod chatter;
+pub mod composite;
 pub mod dead_actions;
 pub mod entropy;
 pub mod saturation;
