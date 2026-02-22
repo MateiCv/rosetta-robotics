@@ -30,6 +30,7 @@ Last activity: 2026-02-22 — Completed 05-07 (RoboDM Format Reader)
 |-------|------|----------|-------|-------|
 | 05 | 01 - Shared Infrastructure | 15min | 2 | 15 |
 | 05 | 05 - RLDS/TFRecord Format Reader | 9min | 2 | 6 |
+| 05 | 04 - Zarr Format Reader | 9min | 2 | 5 |
 | 05 | 07 - RoboDM Format Reader | 4min | 1 | 3 |
 
 ## Accumulated Context
@@ -49,6 +50,8 @@ Key decisions carried forward to PROJECT.md Key Decisions table.
 - [05-05] All features stored in metadata for full preservation, even when also mapped to Frame.action/state
 - [05-07] Manual EBML VINT parsing used instead of ebml-iterable crate because RoboDM schema is undocumented
 - [05-07] Heuristic element classification (image/numeric/text/integer/raw) for best-effort schema reading
+- [05-04] Lazy loading opens fresh FilesystemStore per frame to avoid lifetime issues with zarrs Arc-based API
+- [05-04] Image arrays detected by shape heuristic (4D uint8 with C in 1/3/4) plus name hints
 
 ### Pending Todos
 
@@ -69,5 +72,5 @@ Key items:
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Completed 05-05-PLAN.md (RLDS/TFRecord reader)
-Resume file: .planning/phases/05-remaining-format-readers/05-05-SUMMARY.md
+Stopped at: Completed 05-04-PLAN.md (Zarr Format Reader)
+Resume file: .planning/phases/05-remaining-format-readers/05-04-SUMMARY.md
