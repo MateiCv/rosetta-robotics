@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-02-21)
 ## Current Position
 
 Phase: 2 of 8 (LeRobot v3 End-to-End Pipeline)
-Plan: 3 of 4 in current phase
+Plan: 4 of 4 in current phase
 Status: In progress
-Last activity: 2026-02-22 -- Completed 02-01 Video codec (H264VideoEncoder + VideoDecoder)
+Last activity: 2026-02-22 -- Completed 02-03 LeRobot v3 Reader (LeRobotV3Reader + Parquet I/O)
 
-Progress: [█████-----] 50% (Phase 2)
+Progress: [███████▌--] 75% (Phase 2)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
+- Total plans completed: 5
 - Average duration: 5min
-- Total execution time: 0.33 hours
+- Total execution time: 0.45 hours
 
 **By Phase:**
 
@@ -34,6 +34,7 @@ Progress: [█████-----] 50% (Phase 2)
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 02 P03 | 7min | 2 tasks | 10 files |
 | Phase 02 P01 | 11min | 2 tasks | 5 files |
 | Phase 02 P02 | 3min | 2 tasks | 7 files |
 | Phase 01 P02 | 1min | 1 tasks | 1 files |
@@ -58,6 +59,10 @@ Recent decisions affecting current work:
 - [Phase 02]: detect_format() stub until first FormatReader lands in Plan 03
 - [Phase 02]: ffmpeg-next v8 instead of v7 (v7 incompatible with FFmpeg 8.x -- avfft.h removed)
 - [Phase 02]: Packet duration fix: set frame_dur when encoder returns duration=0 to avoid last-frame truncation in MP4
+- [Phase 02]: arrow v54 + parquet v54 for Parquet I/O (direct Arrow RecordBatch control, not polars)
+- [Phase 02]: Read all Parquet data upfront in Phase 2 (streaming deferred to Phase 3)
+- [Phase 02]: Lazy video frame decoding via closure capture -- sequential iteration, seeking deferred to Phase 3
+- [Phase 02]: detect_format() now functional via LeRobotV3Reader.can_read()
 
 ### Pending Todos
 
@@ -70,5 +75,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Completed 02-01-PLAN.md (Video codec: H264VideoEncoder + VideoDecoder)
+Stopped at: Completed 02-03-PLAN.md (LeRobot v3 Reader: LeRobotV3Reader + Parquet I/O)
 Resume file: None

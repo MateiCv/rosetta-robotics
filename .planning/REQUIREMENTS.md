@@ -13,14 +13,14 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **CORE-02**: Conversion pipeline reads episodes from source format and writes to target format with configurable field/camera remapping
 - [ ] **CORE-03**: Pipeline processes episodes in parallel via rayon work-stealing thread pool with zero serialization overhead
 - [ ] **CORE-04**: Pipeline continues on per-episode errors by default, collecting failures for summary report (`--fail-on-error` to override)
-- [ ] **CORE-05**: Lock-free chunked Parquet writing constructs Arrow buffers directly in native memory without Python intermediary
+- [x] **CORE-05**: Lock-free chunked Parquet writing constructs Arrow buffers directly in native memory without Python intermediary
 - [ ] **CORE-06**: Deterministic output mode produces bit-for-bit identical output given the same input and config
 
 ### Format Reading
 
 - [ ] **READ-01**: Reader detects and reads RLDS/TFRecord datasets (Open-X Embodiment) without TensorFlow dependency
 - [ ] **READ-02**: Reader detects and reads LeRobot v2 datasets (Parquet-based)
-- [ ] **READ-03**: Reader detects and reads LeRobot v3 datasets (Parquet + MP4 video)
+- [x] **READ-03**: Reader detects and reads LeRobot v3 datasets (Parquet + MP4 video)
 - [ ] **READ-04**: Reader detects and reads HDF5 datasets (robomimic, ACT/ALOHA formats)
 - [ ] **READ-05**: Reader detects and reads Zarr datasets (Diffusion Policy, UMI) including Zarr v2 with Blosc compression
 - [ ] **READ-06**: Reader detects and reads ROS bag files (ROS 1 .bag and ROS 2 MCAP formats)
@@ -143,11 +143,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CORE-02 | Phase 2 | Pending |
 | CORE-03 | Phase 3 | Pending |
 | CORE-04 | Phase 3 | Pending |
-| CORE-05 | Phase 2 | Pending |
+| CORE-05 | Phase 2 | Complete |
 | CORE-06 | Phase 3 | Pending |
 | READ-01 | Phase 5 | Pending |
 | READ-02 | Phase 5 | Pending |
-| READ-03 | Phase 2 | Pending |
+| READ-03 | Phase 2 | Complete |
 | READ-04 | Phase 5 | Pending |
 | READ-05 | Phase 5 | Pending |
 | READ-06 | Phase 5 | Pending |
