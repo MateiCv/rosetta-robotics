@@ -13,6 +13,8 @@
 
 pub mod reader;
 pub mod tfrecord;
+pub mod writer;
 
 pub use reader::{RLDSDetector, RLDSReader};
 pub use self::tfrecord::{decode_example, open_tfrecord_file, FeatureValue};
+pub use writer::RLDSWriter;
