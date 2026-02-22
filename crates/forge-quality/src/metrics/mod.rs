@@ -12,8 +12,11 @@ use crate::config::QualityConfig;
 
 pub mod chatter;
 pub mod dead_actions;
+pub mod entropy;
+pub mod saturation;
 pub mod smoothness;
 pub mod static_det;
+pub mod timestamps;
 
 /// Identifies a specific quality metric.
 ///
@@ -159,8 +162,108 @@ pub trait MetricAccumulator: Send {
 
 /// Create the set of metric accumulators for a given configuration.
 ///
-/// Returns one accumulator per non-skipped metric. Concrete implementations
-/// will be added in Plan 02; this currently returns an empty vector.
-pub fn create_accumulators(_config: &QualityConfig) -> Vec<Box<dyn MetricAccumulator>> {
-    Vec::new()
+/// Returns one accumulator per non-skipped [`MetricKind`]. The time delta
+/// (`dt`) for frame-rate-dependent metrics is derived from
+/// `config.fps` (defaulting to 30 fps).
+pub fn create_accumulators(config: &QualityConfig) -> Vec<Box<dyn MetricAccumulator>> {
+    let dt = 1.0 / config.fps.unwrap_or(30.0);
+    let mut accumulators: Vec<Box<dyn MetricAccumulator>> = Vec::new();
+
+    if !config.skip_metrics.contains(&MetricKind::Smoothness) {
+        accumulators.push(Box::new(smoothness::SmoothnessAccumulator::new(dt)));
+    }
+    if !config.skip_metrics.contains(&MetricKind::DeadActions) {
+        accumulators.push(Box::new(dead_actions::DeadActionsAccumulator::new()));
+    }
+    if !config.skip_metrics.contains(&MetricKind::GripperChatter) {
+        accumulators.push(Box::new(chatter::ChatterAccumulator::with_dt(
+            config.gripper_dim,
+            dt,
+        )));
+    }
+    if !config.skip_metrics.contains(&MetricKind::StaticDetection) {
+        accumulators.push(Box::new(static_det::StaticDetAccumulator::new()));
+    }
+    if !config.skip_metrics.contains(&MetricKind::TimestampRegularity) {
+        accumulators.push(Box::new(timestamps::TimestampsAccumulator::new(dt)));
+    }
+    if !config.skip_metrics.contains(&MetricKind::ActionSaturation) {
+        accumulators.push(Box::new(saturation::SaturationAccumulator::new()));
+    }
+    if !config.skip_metrics.contains(&MetricKind::ActionEntropy) {
+        accumulators.push(Box::new(entropy::EntropyAccumulator::new()));
+    }
+
+    accumulators
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_accumulators_returns_all_seven_with_default_config() {
+        let config = QualityConfig::default();
+        let accumulators = create_accumulators(&config);
+        assert_eq!(
+            accumulators.len(),
+            7,
+            "default config should create 7 accumulators, got {}",
+            accumulators.len()
+        );
+
+        // Verify each kind is present.
+        let kinds: Vec<MetricKind> = accumulators.iter().map(|a| a.kind()).collect();
+        for expected in MetricKind::all() {
+            assert!(
+                kinds.contains(expected),
+                "missing accumulator for {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn create_accumulators_skips_one_metric() {
+        let mut config = QualityConfig::default();
+        config.skip_metrics.push(MetricKind::GripperChatter);
+
+        let accumulators = create_accumulators(&config);
+        assert_eq!(
+            accumulators.len(),
+            6,
+            "should create 6 accumulators when 1 is skipped, got {}",
+            accumulators.len()
+        );
+
+        let kinds: Vec<MetricKind> = accumulators.iter().map(|a| a.kind()).collect();
+        assert!(
+            !kinds.contains(&MetricKind::GripperChatter),
+            "GripperChatter should be skipped"
+        );
+    }
+
+    #[test]
+    fn create_accumulators_skips_multiple_metrics() {
+        let mut config = QualityConfig::default();
+        config.skip_metrics.push(MetricKind::GripperChatter);
+        config.skip_metrics.push(MetricKind::ActionEntropy);
+        config.skip_metrics.push(MetricKind::Smoothness);
+
+        let accumulators = create_accumulators(&config);
+        assert_eq!(
+            accumulators.len(),
+            4,
+            "should create 4 accumulators when 3 are skipped, got {}",
+            accumulators.len()
+        );
+    }
+
+    #[test]
+    fn create_accumulators_with_custom_fps() {
+        let mut config = QualityConfig::default();
+        config.fps = Some(60.0);
+
+        let accumulators = create_accumulators(&config);
+        assert_eq!(accumulators.len(), 7);
+    }
 }
