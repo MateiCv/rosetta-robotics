@@ -116,7 +116,7 @@ impl QualityConfig {
 ///
 /// Specifies which episodes to keep or remove based on quality scores,
 /// with optional manual overrides and dry-run mode.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FilterConfig {
     /// Minimum composite score to keep an episode.
     #[serde(default)]
@@ -137,18 +137,6 @@ pub struct FilterConfig {
     /// If `true`, compute filtering decisions but do not write output.
     #[serde(default)]
     pub dry_run: bool,
-}
-
-impl Default for FilterConfig {
-    fn default() -> Self {
-        Self {
-            min_quality: None,
-            per_metric_thresholds: HashMap::new(),
-            keep_episodes: Vec::new(),
-            remove_episodes: Vec::new(),
-            dry_run: false,
-        }
-    }
 }
 
 #[cfg(test)]
