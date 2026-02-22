@@ -8,3 +8,6 @@ pub mod info;
 pub mod parquet_io;
 pub mod reader;
 pub mod writer;
+
+pub use reader::LeRobotV3Reader;
+pub use writer::LeRobotV3Writer;
