@@ -11,7 +11,9 @@
 pub mod reader;
 pub mod ros1;
 pub mod ros2;
+pub mod writer;
 
 pub use reader::{RosbagDetector, RosbagReader};
 pub use ros1::read_ros1_bag;
 pub use ros2::read_ros2_mcap;
+pub use writer::RosbagWriter;
