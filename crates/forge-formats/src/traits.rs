@@ -64,4 +64,13 @@ pub trait FormatWriter: Send + Sync {
     /// Writes any top-level metadata files, indices, or manifests required
     /// by the output format (e.g., `info.json`, `meta/info.json`).
     fn finalize(&mut self, output_path: &Path, dataset_info: &DatasetInfo) -> ForgeResult<()>;
+
+    /// Enable deterministic mode for bit-identical output.
+    ///
+    /// When enabled, writers should use single-threaded encoding and sort
+    /// all HashMap keys before serialization. Default implementation is a
+    /// no-op for formats that do not support deterministic output.
+    fn set_deterministic(&mut self, _deterministic: bool) {
+        // Default: no-op. Formats that support deterministic mode override this.
+    }
 }

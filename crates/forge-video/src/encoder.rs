@@ -82,6 +82,12 @@ impl H264VideoEncoder {
         opts.set("crf", &config.crf.to_string());
         opts.set("preset", &config.preset);
 
+        // Force single-threaded x264 encoding for deterministic (bit-identical) output.
+        // Multi-threaded x264 uses non-deterministic macroblock scheduling.
+        if config.deterministic {
+            opts.set("threads", "1");
+        }
+
         let encoder = video_enc
             .open_with(opts)
             .map_err(|e| ForgeError::Video(format!("open encoder: {e}")))?;

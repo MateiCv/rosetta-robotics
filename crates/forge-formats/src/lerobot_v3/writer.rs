@@ -47,6 +47,8 @@ pub struct LeRobotV3Writer {
     cameras: Vec<(String, u32, u32, u8)>,
     /// Task descriptions.
     tasks: Vec<String>,
+    /// If true, use deterministic encoding (single-threaded x264 and sorted metadata).
+    deterministic: bool,
 }
 
 impl LeRobotV3Writer {
@@ -62,7 +64,16 @@ impl LeRobotV3Writer {
             state_dim: None,
             cameras: Vec::new(),
             tasks: vec!["default_task".to_string()],
+            deterministic: false,
         }
+    }
+
+    /// Enable deterministic mode for bit-identical output.
+    ///
+    /// When enabled, video encoding uses single-threaded x264 and
+    /// all metadata serialization sorts HashMap keys.
+    pub fn set_deterministic(&mut self, deterministic: bool) {
+        self.deterministic = deterministic;
     }
 
     /// Build and write the data Parquet file for a single episode.
@@ -225,7 +236,8 @@ impl LeRobotV3Writer {
 
             let mp4_path = video_dir.join(format!("file-{file_index:03}.mp4"));
 
-            let config = VideoEncoderConfig::new(width, height, self.fps as f64);
+            let mut config = VideoEncoderConfig::new(width, height, self.fps as f64);
+            config.deterministic = self.deterministic;
             let mut encoder = H264VideoEncoder::new(&mp4_path, &config)?;
 
             for frame in &episode.frames {
@@ -538,14 +550,22 @@ impl FormatWriter for LeRobotV3Writer {
         Ok(())
     }
 
+    fn set_deterministic(&mut self, deterministic: bool) {
+        self.deterministic = deterministic;
+    }
+
     fn finalize(&mut self, output_path: &Path, _dataset_info: &DatasetInfo) -> ForgeResult<()> {
         // Write meta/info.json.
+        // Serialize through serde_json::Value to ensure deterministic key ordering
+        // (serde_json::Map uses BTreeMap internally, sorting all keys alphabetically).
         let info = self.build_info_json(output_path);
         let meta_dir = output_path.join("meta");
         std::fs::create_dir_all(&meta_dir).map_err(ForgeError::Io)?;
         let info_path = meta_dir.join("info.json");
+        let info_value =
+            serde_json::to_value(&info).map_err(ForgeError::Serialization)?;
         let info_str =
-            serde_json::to_string_pretty(&info).map_err(ForgeError::Serialization)?;
+            serde_json::to_string_pretty(&info_value).map_err(ForgeError::Serialization)?;
         std::fs::write(info_path, info_str).map_err(ForgeError::Io)?;
 
         // Write episode metadata Parquet.

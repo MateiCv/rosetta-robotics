@@ -30,6 +30,9 @@ pub struct VideoEncoderConfig {
     pub height: u32,
     /// Frames per second.
     pub fps: f64,
+    /// If true, force single-threaded x264 encoding for bit-identical output.
+    /// Reduces encoding throughput but guarantees reproducibility.
+    pub deterministic: bool,
 }
 
 impl Default for VideoEncoderConfig {
@@ -43,6 +46,7 @@ impl Default for VideoEncoderConfig {
             width: 0,
             height: 0,
             fps: 30.0,
+            deterministic: false,
         }
     }
 }

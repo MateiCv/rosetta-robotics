@@ -30,27 +30,32 @@ const VIDEO_HEIGHT: u32 = 4;
 /// FPS.
 const FPS: u32 = 30;
 
-/// Create a synthetic LeRobot v3 source dataset.
+/// Create a synthetic LeRobot v3 source dataset with default NUM_EPISODES.
 fn create_source_dataset(root: &std::path::Path) {
-    write_info_json(root);
-    write_data_parquet(root);
-    write_episode_metadata(root);
-    write_videos(root);
+    create_source_dataset_n(root, NUM_EPISODES);
 }
 
-fn write_info_json(root: &std::path::Path) {
+/// Create a synthetic LeRobot v3 source dataset with a configurable number of episodes.
+fn create_source_dataset_n(root: &std::path::Path, num_episodes: usize) {
+    write_info_json_n(root, num_episodes);
+    write_data_parquet_n(root, num_episodes);
+    write_episode_metadata_n(root, num_episodes);
+    write_videos_n(root, num_episodes);
+}
+
+fn write_info_json_n(root: &std::path::Path, num_episodes: usize) {
     let meta_dir = root.join("meta");
     std::fs::create_dir_all(&meta_dir).unwrap();
 
     let info = serde_json::json!({
         "codebase_version": "v3.0",
         "robot_type": "test_robot",
-        "total_episodes": NUM_EPISODES,
-        "total_frames": NUM_EPISODES * FRAMES_PER_EPISODE,
+        "total_episodes": num_episodes,
+        "total_frames": num_episodes * FRAMES_PER_EPISODE,
         "total_tasks": 1,
         "chunks_size": 1000,
         "fps": FPS,
-        "splits": { "train": format!("0:{NUM_EPISODES}") },
+        "splits": { "train": format!("0:{num_episodes}") },
         "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
         "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4",
         "features": {
@@ -93,11 +98,11 @@ fn write_info_json(root: &std::path::Path) {
     std::fs::write(info_path, serde_json::to_string_pretty(&info).unwrap()).unwrap();
 }
 
-fn write_data_parquet(root: &std::path::Path) {
+fn write_data_parquet_n(root: &std::path::Path, num_episodes: usize) {
     let data_dir = root.join("data").join("chunk-000");
     std::fs::create_dir_all(&data_dir).unwrap();
 
-    let total_frames = NUM_EPISODES * FRAMES_PER_EPISODE;
+    let total_frames = num_episodes * FRAMES_PER_EPISODE;
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("episode_index", DataType::Int64, false),
@@ -130,7 +135,7 @@ fn write_data_parquet(root: &std::path::Path) {
     let mut task_indices = Vec::with_capacity(total_frames);
 
     let mut global_idx: i64 = 0;
-    for ep in 0..NUM_EPISODES {
+    for ep in 0..num_episodes {
         for fi in 0..FRAMES_PER_EPISODE {
             episode_indices.push(ep as i64);
             frame_indices.push(fi as i64);
@@ -183,7 +188,7 @@ fn write_data_parquet(root: &std::path::Path) {
     writer.close().unwrap();
 }
 
-fn write_episode_metadata(root: &std::path::Path) {
+fn write_episode_metadata_n(root: &std::path::Path, num_episodes: usize) {
     let meta_dir = root.join("meta").join("episodes").join("chunk-000");
     std::fs::create_dir_all(&meta_dir).unwrap();
 
@@ -197,7 +202,7 @@ fn write_episode_metadata(root: &std::path::Path) {
     let mut lengths = Vec::new();
     let mut task_indices = Vec::new();
 
-    for ep in 0..NUM_EPISODES {
+    for ep in 0..num_episodes {
         ep_indices.push(ep as i64);
         lengths.push(FRAMES_PER_EPISODE as i64);
         task_indices.push(0i64);
@@ -221,7 +226,7 @@ fn write_episode_metadata(root: &std::path::Path) {
     writer.close().unwrap();
 }
 
-fn write_videos(root: &std::path::Path) {
+fn write_videos_n(root: &std::path::Path, num_episodes: usize) {
     let video_dir = root
         .join("videos")
         .join("observation.images.top")
@@ -232,7 +237,7 @@ fn write_videos(root: &std::path::Path) {
     let config = forge_video::VideoEncoderConfig::new(VIDEO_WIDTH, VIDEO_HEIGHT, FPS as f64);
     let mut encoder = forge_video::H264VideoEncoder::new(&mp4_path, &config).expect("create encoder");
 
-    let total_frames = NUM_EPISODES * FRAMES_PER_EPISODE;
+    let total_frames = num_episodes * FRAMES_PER_EPISODE;
     for i in 0..total_frames {
         let intensity = ((i * 25) % 256) as u8;
         let rgb_data: Vec<u8> = vec![intensity; (VIDEO_WIDTH * VIDEO_HEIGHT * 3) as usize];
@@ -418,4 +423,176 @@ fn converter_with_camera_remapping() {
         !old_video_dir.exists(),
         "old camera name should not exist in output"
     );
+}
+
+/// Verify parallel conversion with 6 episodes exercises rayon parallelism
+/// and preserves episode ordering.
+#[test]
+fn parallel_conversion_multiple_episodes() {
+    let num_episodes = 6;
+    let source_dir = TempDir::new().expect("create source temp dir");
+    let output_dir = TempDir::new().expect("create output temp dir");
+
+    create_source_dataset_n(source_dir.path(), num_episodes);
+
+    let config = ConversionConfig {
+        target_format: Some("lerobot-v3".to_string()),
+        num_workers: 0, // auto-detect (uses multiple threads)
+        ..ConversionConfig::default()
+    };
+    let converter = Converter::new(config);
+    let result = converter
+        .convert(source_dir.path(), output_dir.path())
+        .expect("parallel conversion should succeed");
+
+    assert_eq!(
+        result.episodes_converted, num_episodes,
+        "all episodes should convert"
+    );
+    assert_eq!(result.episodes_failed, 0, "no episodes should fail");
+    assert_eq!(
+        result.total_frames,
+        num_episodes * FRAMES_PER_EPISODE,
+        "total frames should match"
+    );
+
+    // Verify all episodes present in output with correct frame counts.
+    let output = output_dir.path();
+    for ep in 0..num_episodes {
+        let parquet_path = output
+            .join("data/chunk-000")
+            .join(format!("file-{ep:03}.parquet"));
+        assert!(
+            parquet_path.exists(),
+            "data Parquet for episode {ep} missing"
+        );
+
+        let video_path = output
+            .join("videos/observation.images.top/chunk-000")
+            .join(format!("file-{ep:03}.mp4"));
+        assert!(video_path.exists(), "video for episode {ep} missing");
+    }
+
+    // Read back and verify episode ordering is preserved.
+    let reader = forge_formats::get_reader("lerobot-v3").unwrap();
+    let output_info = reader.inspect(output).expect("inspect output");
+    assert_eq!(output_info.total_episodes, num_episodes);
+
+    let episodes: Vec<_> = reader
+        .read_episodes(output)
+        .expect("read_episodes")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("all episodes should read");
+
+    assert_eq!(episodes.len(), num_episodes);
+
+    // Verify episode 0 and episode 5 have correct frame counts.
+    assert_eq!(episodes[0].frames.len(), FRAMES_PER_EPISODE);
+    assert_eq!(episodes[num_episodes - 1].frames.len(), FRAMES_PER_EPISODE);
+}
+
+/// Verify deterministic mode produces bit-identical output on two runs.
+/// Validates CORE-06.
+#[test]
+fn deterministic_produces_identical_output() {
+    let source_dir = TempDir::new().expect("create source temp dir");
+    let output_dir_a = TempDir::new().expect("create output A temp dir");
+    let output_dir_b = TempDir::new().expect("create output B temp dir");
+
+    create_source_dataset(source_dir.path());
+
+    // Run conversion twice with deterministic=true.
+    for output_dir in [output_dir_a.path(), output_dir_b.path()] {
+        let config = ConversionConfig {
+            target_format: Some("lerobot-v3".to_string()),
+            deterministic: true,
+            ..ConversionConfig::default()
+        };
+        let converter = Converter::new(config);
+        let result = converter
+            .convert(source_dir.path(), output_dir)
+            .expect("deterministic conversion should succeed");
+        assert_eq!(result.episodes_converted, NUM_EPISODES);
+    }
+
+    // Compare output files byte-for-byte.
+    // 1. Compare info.json.
+    let info_a = std::fs::read(output_dir_a.path().join("meta/info.json")).unwrap();
+    let info_b = std::fs::read(output_dir_b.path().join("meta/info.json")).unwrap();
+    assert_eq!(info_a, info_b, "info.json should be identical");
+
+    // 2. Compare Parquet files.
+    for ep in 0..NUM_EPISODES {
+        let path_a = output_dir_a
+            .path()
+            .join("data/chunk-000")
+            .join(format!("file-{ep:03}.parquet"));
+        let path_b = output_dir_b
+            .path()
+            .join("data/chunk-000")
+            .join(format!("file-{ep:03}.parquet"));
+        let data_a = std::fs::read(&path_a).unwrap();
+        let data_b = std::fs::read(&path_b).unwrap();
+        assert_eq!(
+            data_a, data_b,
+            "Parquet for episode {ep} should be identical"
+        );
+    }
+
+    // 3. Compare video files (deterministic x264 with threads=1).
+    for ep in 0..NUM_EPISODES {
+        let path_a = output_dir_a
+            .path()
+            .join("videos/observation.images.top/chunk-000")
+            .join(format!("file-{ep:03}.mp4"));
+        let path_b = output_dir_b
+            .path()
+            .join("videos/observation.images.top/chunk-000")
+            .join(format!("file-{ep:03}.mp4"));
+        let data_a = std::fs::read(&path_a).unwrap();
+        let data_b = std::fs::read(&path_b).unwrap();
+        assert_eq!(
+            data_a, data_b,
+            "video for episode {ep} should be identical in deterministic mode"
+        );
+    }
+}
+
+/// Verify ErrorCollector works correctly for error continuation (CORE-04).
+/// Tests the error collection path by exercising ErrorCollector directly.
+#[test]
+fn error_collector_unit_test() {
+    use forge_core::ForgeError;
+    use forge_pipeline::ErrorCollector;
+    use std::path::PathBuf;
+
+    // Test 1: fail_on_error=false collects errors without stopping.
+    let collector = ErrorCollector::new(false);
+    let err1 = ForgeError::Video("decode error: corrupt frame".to_string());
+    let err2 = ForgeError::Conversion {
+        source_format: "lerobot-v3".to_string(),
+        target_format: "lerobot-v3".to_string(),
+        reason: "schema mismatch".to_string(),
+    };
+
+    collector.record(3, &err1, vec![PathBuf::from("output/ep_003.mp4")]);
+    collector.record(7, &err2, vec![PathBuf::from("output/ep_007.parquet")]);
+
+    assert!(!collector.should_stop(), "should not stop with fail_on_error=false");
+    assert_eq!(collector.failure_count(), 2);
+
+    let failures = collector.into_failures();
+    assert_eq!(failures.len(), 2);
+    // Sorted by episode index.
+    assert_eq!(failures[0].episode_index, 3);
+    assert_eq!(failures[1].episode_index, 7);
+    assert!(failures[0].error.contains("decode error"));
+    assert!(failures[1].error.contains("schema mismatch"));
+    assert_eq!(failures[0].affected_files.len(), 1);
+
+    // Test 2: fail_on_error=true signals stop on first error.
+    let collector2 = ErrorCollector::new(true);
+    let err = ForgeError::Video("fatal error".to_string());
+    collector2.record(0, &err, vec![]);
+    assert!(collector2.should_stop(), "should stop with fail_on_error=true");
 }

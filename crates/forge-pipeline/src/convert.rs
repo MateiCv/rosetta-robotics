@@ -104,6 +104,11 @@ impl Converter {
         // 4. Get writer.
         let mut writer = registry::get_writer(target_format)?;
 
+        // 4b. Wire deterministic mode to the writer.
+        if self.config.deterministic {
+            writer.set_deterministic(true);
+        }
+
         // 5. Inspect source.
         let dataset_info = reader.inspect(source_path)?;
 
