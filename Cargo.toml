@@ -25,4 +25,5 @@ bytes = "1"
 clap = { version = "4.5", features = ["derive"] }
 ffmpeg-next = "8"
 forge-core = { path = "crates/forge-core" }
+forge-formats = { path = "crates/forge-formats" }
 forge-video = { path = "crates/forge-video" }

@@ -21,6 +21,8 @@ struct Cli {
 enum Commands {
     /// Show version, build info, and FFmpeg availability
     Version,
+    /// List all supported dataset formats
+    Formats,
 }
 
 fn main() {
@@ -28,6 +30,7 @@ fn main() {
 
     match cli.command {
         Commands::Version => print_version(),
+        Commands::Formats => print_formats(),
     }
 }
 
@@ -63,5 +66,23 @@ fn print_version() {
         _ => {
             println!("ffmpeg: not found (required for video operations)");
         }
+    }
+}
+
+fn print_formats() {
+    let formats = forge_formats::all_formats();
+    println!("Supported formats:\n");
+    println!(
+        "{:<20} {:<8} {:<8} Description",
+        "Format", "Read", "Write"
+    );
+    println!("{}", "-".repeat(65));
+    for fmt in formats {
+        let read = if fmt.can_read { "yes" } else { "-" };
+        let write = if fmt.can_write { "yes" } else { "-" };
+        println!(
+            "{:<20} {:<8} {:<8} {}",
+            fmt.name, read, write, fmt.description
+        );
     }
 }
