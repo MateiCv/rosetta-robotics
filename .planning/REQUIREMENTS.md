@@ -11,10 +11,10 @@ Requirements for initial release. Each maps to roadmap phases.
 
 - [x] **CORE-01**: System defines canonical Episode, Frame, LazyArray, LazyImage, and DatasetInfo data models shared across all formats
 - [x] **CORE-02**: Conversion pipeline reads episodes from source format and writes to target format with configurable field/camera remapping
-- [ ] **CORE-03**: Pipeline processes episodes in parallel via rayon work-stealing thread pool with zero serialization overhead
-- [ ] **CORE-04**: Pipeline continues on per-episode errors by default, collecting failures for summary report (`--fail-on-error` to override)
+- [x] **CORE-03**: Pipeline processes episodes in parallel via rayon work-stealing thread pool with zero serialization overhead
+- [x] **CORE-04**: Pipeline continues on per-episode errors by default, collecting failures for summary report (`--fail-on-error` to override)
 - [x] **CORE-05**: Lock-free chunked Parquet writing constructs Arrow buffers directly in native memory without Python intermediary
-- [ ] **CORE-06**: Deterministic output mode produces bit-for-bit identical output given the same input and config
+- [x] **CORE-06**: Deterministic output mode produces bit-for-bit identical output given the same input and config
 
 ### Format Reading
 
@@ -141,10 +141,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | CORE-01 | Phase 1 | Complete |
 | CORE-02 | Phase 2 | Complete |
-| CORE-03 | Phase 3 | Pending |
-| CORE-04 | Phase 3 | Pending |
+| CORE-03 | Phase 3 | Complete |
+| CORE-04 | Phase 3 | Complete |
 | CORE-05 | Phase 2 | Complete |
-| CORE-06 | Phase 3 | Pending |
+| CORE-06 | Phase 3 | Complete |
 | READ-01 | Phase 5 | Pending |
 | READ-02 | Phase 5 | Pending |
 | READ-03 | Phase 2 | Complete |

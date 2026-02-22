@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-02-21)
 ## Current Position
 
 Phase: 3 of 8 (Parallel Pipeline and Error Handling)
-Plan: 1 of 3 in current phase (1 complete)
+Plan: 2 of 3 in current phase (2 complete)
 Status: Executing Phase 3
-Last activity: 2026-02-22 -- Completed 03-01 Foundation Dependencies and Zero-Copy Frames
+Last activity: 2026-02-22 -- Completed 03-02 Parallel Pipeline, Error Handling, and Deterministic Mode
 
-Progress: [███-------] 33% (Phase 3)
+Progress: [██████----] 67% (Phase 3)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 7
+- Total plans completed: 8
 - Average duration: 6min
-- Total execution time: 0.6 hours
+- Total execution time: 0.7 hours
 
 **By Phase:**
 
@@ -34,6 +34,7 @@ Progress: [███-------] 33% (Phase 3)
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 03 P02 | 7min | 2 tasks | 8 files |
 | Phase 03 P01 | 3min | 2 tasks | 8 files |
 | Phase 02 P04 | 9min | 2 tasks | 14 files |
 | Phase 02 P03 | 7min | 2 tasks | 10 files |
@@ -71,6 +72,10 @@ Recent decisions affecting current work:
 - [Phase 03]: num_workers default 0 means auto-detect all CPU cores (was 1 for sequential)
 - [Phase 03]: EpisodeFailure is a standalone struct, not a ForgeError variant, for flexible error collection
 - [Phase 03]: Bytes::from(Vec<u8>) for zero-copy frame sharing -- takes ownership of Vec allocation and wraps in Arc
+- [Phase 03]: Local rayon pool (not global) avoids singleton conflicts in tests and nested converters
+- [Phase 03]: Collect all episodes from Box<dyn Iterator> on main thread before par_iter (iterator is not Send)
+- [Phase 03]: FormatWriter::set_deterministic as default trait method (no-op) avoids breaking existing implementations
+- [Phase 03]: Serialize info.json through serde_json::Value for guaranteed sorted key ordering across runs
 
 ### Pending Todos
 
@@ -83,5 +88,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Completed 03-01-PLAN.md (Foundation Dependencies and Zero-Copy Frames)
+Stopped at: Completed 03-02-PLAN.md (Parallel Pipeline, Error Handling, and Deterministic Mode)
 Resume file: None
