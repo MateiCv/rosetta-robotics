@@ -103,7 +103,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 | 2. LeRobot v3 End-to-End Pipeline | v1.0 | 4/4 | Complete | 2026-02-22 |
 | 3. Parallel Pipeline and Error Handling | v1.0 | 4/4 | Complete | 2026-02-22 |
 | 4. Quality Analysis and Filtering | v1.0 | 4/4 | Complete | 2026-02-22 |
-| 5. Remaining Format Readers | Next | 8/8 | Complete | 2026-02-22 |
+| 5. Remaining Format Readers | Next | Complete    | 2026-02-22 | 2026-02-22 |
 | 6. Remaining Format Writers | Next | 0/? | Not started | - |
 | 7. CLI, Configuration, and Hub Download | Next | 0/? | Not started | - |
 | 8. Hub Upload, Visualization, and Distribution | Next | 0/? | Not started | - |
