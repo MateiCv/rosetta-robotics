@@ -79,3 +79,20 @@ pub enum ForgeError {
 
 /// Convenience type alias for Results using [`ForgeError`].
 pub type ForgeResult<T> = Result<T, ForgeError>;
+
+/// Structured failure record for a single episode during conversion.
+///
+/// Used for collecting per-episode errors during parallel conversion,
+/// enabling structured error reporting with episode index, error chain,
+/// and affected files.
+#[derive(Debug, Clone)]
+pub struct EpisodeFailure {
+    /// Zero-based episode index in the source dataset.
+    pub episode_index: usize,
+    /// Primary error message.
+    pub error: String,
+    /// Chain of error causes (outermost first).
+    pub context: Vec<String>,
+    /// Files affected by this failure (partial output, marker files).
+    pub affected_files: Vec<std::path::PathBuf>,
+}

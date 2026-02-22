@@ -77,9 +77,25 @@ pub struct ConversionConfig {
     #[serde(default = "default_true")]
     pub include_depth: bool,
 
-    /// Number of worker threads for parallel processing (default: 1).
+    /// Number of worker threads for parallel processing (default: 0 = auto-detect).
     #[serde(default = "default_workers")]
     pub num_workers: usize,
+
+    /// If true, produce bit-for-bit identical output (opt-in, uses parallel processing with sorted merge).
+    #[serde(default)]
+    pub deterministic: bool,
+
+    /// Suppress all progress output (only errors printed to stderr).
+    #[serde(default)]
+    pub quiet: bool,
+
+    /// Output a single final JSON blob with all results instead of progress bar.
+    #[serde(default)]
+    pub json_output: bool,
+
+    /// Enable per-episode verbose log lines.
+    #[serde(default)]
+    pub verbose: bool,
 }
 
 fn default_codec() -> String {
@@ -95,7 +111,7 @@ fn default_true() -> bool {
     true
 }
 fn default_workers() -> usize {
-    1
+    0
 }
 
 impl Default for ConversionConfig {
@@ -117,6 +133,10 @@ impl Default for ConversionConfig {
             compress_videos: true,
             include_depth: true,
             num_workers: default_workers(),
+            deterministic: false,
+            quiet: false,
+            json_output: false,
+            verbose: false,
         }
     }
 }

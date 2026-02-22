@@ -10,6 +10,10 @@ repository.workspace = true
 [dependencies]
 forge-core.workspace = true
 forge-formats.workspace = true
+rayon.workspace = true
+indicatif.workspace = true
+sysinfo.workspace = true
+crossbeam-channel.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

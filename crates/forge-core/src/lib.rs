@@ -17,7 +17,7 @@ pub mod schema;
 // Top-level re-exports for convenience.
 pub use config::ConversionConfig;
 pub use episode::Episode;
-pub use error::{ForgeError, ForgeResult};
+pub use error::{EpisodeFailure, ForgeError, ForgeResult};
 pub use frame::Frame;
 pub use lazy::{LazyArray, LazyImage};
 pub use schema::{CameraInfo, DatasetInfo, Dtype, FieldSchema};
