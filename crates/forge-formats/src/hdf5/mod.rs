@@ -9,6 +9,8 @@
 
 pub mod layout;
 pub mod reader;
+pub mod writer;
 
 pub use layout::{detect_layout, detect_layout_from_path, HDF5Layout};
 pub use reader::{HDF5Detector, HDF5Reader};
+pub use writer::HDF5Writer;

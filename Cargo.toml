@@ -34,6 +34,7 @@ tempfile = "3"
 pulp = "0.22"
 # Phase 5: Format reader dependencies
 hdf5 = "0.8"
+ndarray = "0.15"
 zarrs = { version = "0.22", default-features = false, features = ["filesystem", "blosc", "gzip", "zstd", "crc32c", "sharding"] }
 tfrecord = "0.15"
 mcap = "0.24"
