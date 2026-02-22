@@ -6,6 +6,7 @@
 
 use std::path::Path;
 
+use bytes::Bytes;
 use ffmpeg_next as ffmpeg;
 use ffmpeg::format::Pixel;
 use ffmpeg::media::Type as MediaType;
@@ -14,8 +15,8 @@ use forge_core::error::{ForgeError, ForgeResult};
 /// A single decoded video frame.
 #[derive(Debug, Clone)]
 pub struct DecodedFrame {
-    /// RGB24 pixel data (`width * height * 3` bytes).
-    pub data: Vec<u8>,
+    /// RGB24 pixel data (`width * height * 3` bytes). Arc-backed for zero-copy sharing.
+    pub data: Bytes,
     /// Frame width in pixels.
     pub width: u32,
     /// Frame height in pixels.
@@ -151,7 +152,7 @@ impl VideoDecoder {
                 }
 
                 let frame = DecodedFrame {
-                    data,
+                    data: Bytes::from(data),
                     width: self.width,
                     height: self.height,
                     frame_index: self.frame_index,

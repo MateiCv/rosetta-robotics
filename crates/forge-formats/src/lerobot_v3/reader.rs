@@ -339,7 +339,7 @@ fn decode_video_frame(
     for result in decoder {
         let frame = result?;
         if frame.frame_index == frame_index {
-            return Ok(Bytes::from(frame.data));
+            return Ok(frame.data);
         }
     }
 
