@@ -12,6 +12,7 @@ use std::path::Path;
 
 use forge_core::{ForgeError, ForgeResult};
 
+use crate::lerobot_v2::LeRobotV2Detector;
 use crate::lerobot_v3::reader::LeRobotV3Reader;
 use crate::traits::FormatReader;
 
@@ -60,15 +61,15 @@ pub fn detect_format_scored(path: &Path) -> ForgeResult<Vec<DetectionResult>> {
     // Register all available detectors. Order: most specific first.
     // New detectors are added here as format readers are implemented.
     let detectors: Vec<Box<dyn FormatDetector>> = vec![
-        // Phase 5 detectors will be added here in Plans 02-07:
-        // Box::new(GR00TDetector),
-        // Box::new(LeRobotV2Detector),
+        // Phase 5 detectors: most specific first.
+        // Box::new(GR00TDetector),       // Plan 02 (added after LeRobotV2)
         // Box::new(RoboDMDetector),
         // Box::new(RLDSDetector),
         // Box::new(ZarrDetector),
         // Box::new(HDF5Detector),
         // Box::new(RosbagDetector),
         Box::new(LeRobotV3Detector),
+        Box::new(LeRobotV2Detector),
     ];
 
     let mut results: Vec<DetectionResult> = detectors

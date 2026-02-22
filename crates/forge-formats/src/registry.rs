@@ -8,6 +8,7 @@ use std::path::Path;
 
 use forge_core::{ForgeError, ForgeResult};
 
+use crate::lerobot_v2::reader::LeRobotV2Reader;
 use crate::lerobot_v3::reader::LeRobotV3Reader;
 use crate::lerobot_v3::writer::LeRobotV3Writer;
 use crate::traits::{FormatReader, FormatWriter};
@@ -30,12 +31,20 @@ pub struct FormatCapability {
 /// Returns a static slice of [`FormatCapability`] entries. New formats are
 /// added to this array as their reader/writer implementations land.
 pub fn all_formats() -> &'static [FormatCapability] {
-    static FORMATS: &[FormatCapability] = &[FormatCapability {
-        name: "lerobot-v3",
-        can_read: true,
-        can_write: true,
-        description: "LeRobot v3 (Parquet + MP4 video)",
-    }];
+    static FORMATS: &[FormatCapability] = &[
+        FormatCapability {
+            name: "lerobot-v3",
+            can_read: true,
+            can_write: true,
+            description: "LeRobot v3 (Parquet + MP4 video)",
+        },
+        FormatCapability {
+            name: "lerobot-v2",
+            can_read: true,
+            can_write: false,
+            description: "LeRobot v2 (per-episode Parquet + MP4 video)",
+        },
+    ];
     FORMATS
 }
 
@@ -44,10 +53,15 @@ pub fn all_formats() -> &'static [FormatCapability] {
 /// Iterates over registered format readers and returns the first format
 /// whose `can_read()` returns `true`.
 pub fn detect_format(path: &Path) -> ForgeResult<&'static str> {
-    // Check each registered reader in priority order.
-    let reader = LeRobotV3Reader;
-    if reader.can_read(path) {
+    // Check each registered reader in priority order (most specific first).
+    let v3_reader = LeRobotV3Reader;
+    if v3_reader.can_read(path) {
         return Ok("lerobot-v3");
+    }
+
+    let v2_reader = LeRobotV2Reader;
+    if v2_reader.can_read(path) {
+        return Ok("lerobot-v2");
     }
 
     Err(ForgeError::FormatDetection {
@@ -59,6 +73,7 @@ pub fn detect_format(path: &Path) -> ForgeResult<&'static str> {
 pub fn get_reader(format_name: &str) -> ForgeResult<Box<dyn FormatReader>> {
     match format_name {
         "lerobot-v3" => Ok(Box::new(LeRobotV3Reader)),
+        "lerobot-v2" => Ok(Box::new(LeRobotV2Reader)),
         _ => Err(ForgeError::UnsupportedFormat {
             format_name: format_name.to_string(),
             available: all_formats().iter().map(|f| f.name.to_string()).collect(),

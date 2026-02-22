@@ -12,8 +12,13 @@
 //! Phase 5-6.
 
 pub mod detection;
+pub mod lerobot_v2;
 pub mod lerobot_v3;
 pub mod registry;
+#[cfg(feature = "rlds-format")]
+pub mod rlds;
+#[cfg(feature = "robodm-format")]
+pub mod robodm;
 pub mod traits;
 
 // Re-export key types for convenience.
