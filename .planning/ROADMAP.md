@@ -33,12 +33,17 @@ See: `.planning/milestones/v1.0-ROADMAP.md` for full details.
   2. HDF5 datasets (robomimic, ACT/ALOHA), Zarr datasets (Diffusion Policy, UMI with Blosc compression), and ROS bag files (ROS 1 .bag and ROS 2 MCAP) are read and converted to LeRobot v3 with correct data
   3. LeRobot v2, RoboDM, and GR00T datasets are read and converted successfully
   4. Format auto-detection correctly identifies all 8 input formats from filesystem structure alone, without user-specified format hints
-**Plans**: TBD
+**Plans**: 8 plans
 
 Plans:
-- [ ] 05-01: TBD
-- [ ] 05-02: TBD
-- [ ] 05-03: TBD
+- [ ] 05-01-PLAN.md — Core reader infrastructure (ImageEncoding, FormatDetector, detection engine, workspace deps)
+- [ ] 05-02-PLAN.md — LeRobot v2 + GR00T readers
+- [ ] 05-03-PLAN.md — HDF5 reader (robomimic + ALOHA layouts)
+- [ ] 05-04-PLAN.md — Zarr reader (Diffusion Policy, UMI with Blosc)
+- [ ] 05-05-PLAN.md — RLDS/TFRecord reader (Open-X Embodiment, no TensorFlow)
+- [ ] 05-06-PLAN.md — ROS bag reader (ROS 1 .bag + ROS 2 MCAP)
+- [ ] 05-07-PLAN.md — RoboDM reader (Berkeley .vla EBML format)
+- [ ] 05-08-PLAN.md — Auto-detection integration + registry wiring
 
 ### Phase 6: Remaining Format Writers
 **Goal**: Users can convert datasets bidirectionally -- writing to RLDS, HDF5, Zarr, ROS bags, LeRobot v2, and RoboDM in addition to LeRobot v3
@@ -98,7 +103,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 | 2. LeRobot v3 End-to-End Pipeline | v1.0 | 4/4 | Complete | 2026-02-22 |
 | 3. Parallel Pipeline and Error Handling | v1.0 | 4/4 | Complete | 2026-02-22 |
 | 4. Quality Analysis and Filtering | v1.0 | 4/4 | Complete | 2026-02-22 |
-| 5. Remaining Format Readers | Next | 0/? | Not started | - |
+| 5. Remaining Format Readers | Next | 0/8 | Planned | - |
 | 6. Remaining Format Writers | Next | 0/? | Not started | - |
 | 7. CLI, Configuration, and Hub Download | Next | 0/? | Not started | - |
 | 8. Hub Upload, Visualization, and Distribution | Next | 0/? | Not started | - |
