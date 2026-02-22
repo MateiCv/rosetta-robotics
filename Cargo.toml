@@ -32,6 +32,17 @@ arrow = { version = "54", features = ["prettyprint"] }
 parquet = { version = "54", features = ["arrow"] }
 tempfile = "3"
 pulp = "0.22"
+# Phase 5: Format reader dependencies
+hdf5 = "0.8"
+zarrs = { version = "0.22", default-features = false, features = ["filesystem", "blosc", "gzip", "zstd", "crc32c", "sharding"] }
+tfrecord = "0.15"
+mcap = "0.24"
+rosbag = "0.6"
+# rosbags-rs: ROS 2 message deserialization (add when reader is implemented)
+ebml-iterable = "0.6"
+crc32c = "0.6"
+prost = "0.13"
+flate2 = "1"
 forge-core = { path = "crates/forge-core" }
 forge-formats = { path = "crates/forge-formats" }
 forge-video = { path = "crates/forge-video" }

@@ -7,6 +7,16 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["zarr-format", "rlds-format", "rosbag-format", "robodm-format"]
+# Note: hdf5-format requires libHDF5 system library. Enable explicitly:
+#   cargo build --features hdf5-format
+hdf5-format = ["dep:hdf5"]
+zarr-format = ["dep:zarrs"]
+rlds-format = ["dep:tfrecord", "dep:prost", "dep:crc32c", "dep:flate2"]
+rosbag-format = ["dep:mcap", "dep:rosbag"]
+robodm-format = ["dep:ebml-iterable"]
+
 [dependencies]
 forge-core.workspace = true
 forge-video.workspace = true
@@ -15,6 +25,16 @@ serde.workspace = true
 serde_json.workspace = true
 arrow.workspace = true
 parquet.workspace = true
+# Phase 5: Optional format-specific dependencies
+hdf5 = { workspace = true, optional = true }
+zarrs = { workspace = true, optional = true }
+tfrecord = { workspace = true, optional = true }
+mcap = { workspace = true, optional = true }
+rosbag = { workspace = true, optional = true }
+ebml-iterable = { workspace = true, optional = true }
+crc32c = { workspace = true, optional = true }
+prost = { workspace = true, optional = true }
+flate2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true

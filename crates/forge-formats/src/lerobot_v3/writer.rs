@@ -491,6 +491,29 @@ impl LeRobotV3Writer {
     }
 }
 
+/// Recursively sort all object keys in a JSON value for deterministic output.
+///
+/// Required because `serde_json::Map` uses `IndexMap` (insertion-ordered) when
+/// `preserve_order` is enabled by any dependency. This ensures byte-identical
+/// JSON output regardless of HashMap iteration order or feature flags.
+fn sort_json_keys(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut sorted: Vec<(String, serde_json::Value)> = map.into_iter().collect();
+            sorted.sort_by(|a, b| a.0.cmp(&b.0));
+            let sorted_map: serde_json::Map<String, serde_json::Value> = sorted
+                .into_iter()
+                .map(|(k, v)| (k, sort_json_keys(v)))
+                .collect();
+            serde_json::Value::Object(sorted_map)
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.into_iter().map(sort_json_keys).collect())
+        }
+        other => other,
+    }
+}
+
 impl FormatWriter for LeRobotV3Writer {
     fn format_name(&self) -> &str {
         "lerobot-v3"
@@ -556,16 +579,19 @@ impl FormatWriter for LeRobotV3Writer {
 
     fn finalize(&mut self, output_path: &Path, _dataset_info: &DatasetInfo) -> ForgeResult<()> {
         // Write meta/info.json.
-        // Serialize through serde_json::Value to ensure deterministic key ordering
-        // (serde_json::Map uses BTreeMap internally, sorting all keys alphabetically).
+        // Sort all JSON object keys for deterministic output. This is
+        // necessary because serde_json's Map may use IndexMap (insertion-
+        // ordered) when the `preserve_order` feature is enabled by any
+        // dependency in the workspace (e.g., zarrs).
         let info = self.build_info_json(output_path);
         let meta_dir = output_path.join("meta");
         std::fs::create_dir_all(&meta_dir).map_err(ForgeError::Io)?;
         let info_path = meta_dir.join("info.json");
         let info_value =
             serde_json::to_value(&info).map_err(ForgeError::Serialization)?;
+        let sorted_value = sort_json_keys(info_value);
         let info_str =
-            serde_json::to_string_pretty(&info_value).map_err(ForgeError::Serialization)?;
+            serde_json::to_string_pretty(&sorted_value).map_err(ForgeError::Serialization)?;
         std::fs::write(info_path, info_str).map_err(ForgeError::Io)?;
 
         // Write episode metadata Parquet.
