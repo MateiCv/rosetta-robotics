@@ -93,3 +93,7 @@ stack_lego_rlds/
 # HuggingFace cache (user-specific)
 # ~/.cache/forge/ is outside repo, but just in case
 .cache/
+
+# Rust
+target/
+*.pdb

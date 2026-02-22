@@ -1,0 +1,11 @@
+[package]
+name = "forge-pipeline"
+description = "Parallel conversion pipeline orchestrating format readers and writers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+forge-core.workspace = true

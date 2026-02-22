@@ -1,0 +1,16 @@
+[package]
+name = "forge-cli"
+description = "Command-line interface for the Forge robotics dataset converter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "forge"
+path = "src/main.rs"
+
+[dependencies]
+forge-core.workspace = true
+clap.workspace = true

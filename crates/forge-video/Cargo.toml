@@ -1,0 +1,10 @@
+[package]
+name = "forge-video"
+description = "Video encoding and decoding via FFmpeg for the Forge dataset converter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

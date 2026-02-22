@@ -1,0 +1,26 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/forge-core",
+    "crates/forge-video",
+    "crates/forge-formats",
+    "crates/forge-quality",
+    "crates/forge-pipeline",
+    "crates/forge-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/arpitg1304/forge"
+
+[workspace.dependencies]
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml_ng = "0.9"
+bytes = "1"
+clap = { version = "4.5", features = ["derive"] }
+forge-core = { path = "crates/forge-core" }
