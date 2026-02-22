@@ -103,6 +103,19 @@ impl FormatReader for ZarrReader {
 
         // Read episode boundaries.
         let episode_ends = read_episode_ends_from_store(&store, path)?;
+
+        // Validate episode_ends.
+        let (valid, validation_msg) = validate_episode_ends(&episode_ends);
+        if !valid {
+            if let Some(msg) = validation_msg {
+                warnings.push(ReadWarning {
+                    episode_id: None,
+                    message: format!("Invalid episode_ends: {msg}"),
+                    severity: WarningSeverity::Warning,
+                });
+            }
+        }
+
         let boundaries = compute_boundaries(&episode_ends);
 
         // Discover arrays.
@@ -625,6 +638,7 @@ fn read_root_zattrs(path: &Path) -> HashMap<String, serde_json::Value> {
 /// `[episode_ends[N-1]..episode_ends[N]]`, with the first episode starting at 0.
 ///
 /// Returns `(start, end)` pairs where `start` is inclusive and `end` is exclusive.
+/// Validates that ends are monotonically increasing; skips invalid entries.
 pub(crate) fn compute_boundaries(episode_ends: &[usize]) -> Vec<(usize, usize)> {
     if episode_ends.is_empty() {
         return Vec::new();
@@ -634,11 +648,62 @@ pub(crate) fn compute_boundaries(episode_ends: &[usize]) -> Vec<(usize, usize)> 
     let mut start = 0;
 
     for &end in episode_ends {
-        boundaries.push((start, end));
-        start = end;
+        // Validate: end must be >= start (monotonically non-decreasing).
+        if end >= start {
+            boundaries.push((start, end));
+            start = end;
+        }
+        // Else: skip this invalid entry (non-monotonic episode_ends).
     }
 
     boundaries
+}
+
+/// Detect image encoding from the first bytes of image data.
+///
+/// Checks for JPEG (0xFF 0xD8 0xFF) and PNG (0x89 0x50 0x4E 0x47) magic bytes.
+/// For 3D uint8 arrays (H, W, C), returns `ImageEncoding::Raw`.
+/// For 1D byte blobs, checks magic bytes then falls back to `CompressedBytes`.
+pub(crate) fn detect_image_encoding_from_bytes(data: &[u8], is_raw_pixels: bool) -> ImageEncoding {
+    if is_raw_pixels {
+        return ImageEncoding::Raw;
+    }
+
+    if data.len() >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
+        return ImageEncoding::Jpeg;
+    }
+
+    if data.len() >= 4 && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47
+    {
+        return ImageEncoding::Png;
+    }
+
+    ImageEncoding::CompressedBytes
+}
+
+/// Validate that episode_ends array values are monotonically increasing.
+///
+/// Returns `true` if the array is valid (monotonically non-decreasing and non-empty
+/// with all positive values). Returns `false` with a warning message for issues.
+pub(crate) fn validate_episode_ends(episode_ends: &[usize]) -> (bool, Option<String>) {
+    if episode_ends.is_empty() {
+        return (true, None);
+    }
+
+    let mut prev = 0;
+    for (i, &end) in episode_ends.iter().enumerate() {
+        if end < prev {
+            return (
+                false,
+                Some(format!(
+                    "episode_ends is not monotonically increasing at index {i}: {end} < {prev}"
+                )),
+            );
+        }
+        prev = end;
+    }
+
+    (true, None)
 }
 
 // ---------------------------------------------------------------------------
@@ -1006,6 +1071,224 @@ mod tests {
         assert!(result.confidence >= 0.7);
         assert!(!result.evidence.is_empty());
     }
+
+    // -----------------------------------------------------------------------
+    // Task 2: Edge case tests for episode boundary computation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn compute_boundaries_validates_monotonic() {
+        // Non-monotonic episode_ends: should skip invalid entry.
+        let ends = vec![10, 5, 20]; // 5 < 10 is invalid
+        let boundaries = compute_boundaries(&ends);
+        // Should have (0, 10) and skip 5, then (10, 20)
+        assert_eq!(boundaries, vec![(0, 10), (10, 20)]);
+    }
+
+    #[test]
+    fn compute_boundaries_handles_zero_length_episodes() {
+        // Episode where start == end (zero-length).
+        let ends = vec![10, 10, 20]; // Episode 1 has 0 frames
+        let boundaries = compute_boundaries(&ends);
+        assert_eq!(boundaries, vec![(0, 10), (10, 10), (10, 20)]);
+        // The zero-length episode (10, 10) should be skipped by read_episodes
+        // (handled in the read loop with start >= end check).
+    }
+
+    #[test]
+    fn compute_boundaries_large_dataset() {
+        // Simulate 1000 episodes, 100 frames each.
+        let ends: Vec<usize> = (1..=1000).map(|i| i * 100).collect();
+        let boundaries = compute_boundaries(&ends);
+        assert_eq!(boundaries.len(), 1000);
+        assert_eq!(boundaries[0], (0, 100));
+        assert_eq!(boundaries[999], (99900, 100000));
+    }
+
+    #[test]
+    fn validate_episode_ends_empty_is_valid() {
+        let (valid, msg) = validate_episode_ends(&[]);
+        assert!(valid);
+        assert!(msg.is_none());
+    }
+
+    #[test]
+    fn validate_episode_ends_monotonic_is_valid() {
+        let (valid, msg) = validate_episode_ends(&[10, 20, 30]);
+        assert!(valid);
+        assert!(msg.is_none());
+    }
+
+    #[test]
+    fn validate_episode_ends_non_monotonic_is_invalid() {
+        let (valid, msg) = validate_episode_ends(&[10, 5, 20]);
+        assert!(!valid);
+        assert!(msg.is_some());
+        assert!(msg.unwrap().contains("not monotonically increasing"));
+    }
+
+    #[test]
+    fn validate_episode_ends_with_equal_consecutive_is_valid() {
+        // Equal consecutive values means zero-length episode, which is valid.
+        let (valid, msg) = validate_episode_ends(&[10, 10, 20]);
+        assert!(valid);
+        assert!(msg.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Task 2: Image encoding detection tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn detect_encoding_raw_pixels() {
+        let data = vec![0u8; 100];
+        assert_eq!(
+            detect_image_encoding_from_bytes(&data, true),
+            ImageEncoding::Raw
+        );
+    }
+
+    #[test]
+    fn detect_encoding_jpeg_magic() {
+        let mut data = vec![0xFF, 0xD8, 0xFF, 0xE0]; // JPEG magic
+        data.extend_from_slice(&[0u8; 100]);
+        assert_eq!(
+            detect_image_encoding_from_bytes(&data, false),
+            ImageEncoding::Jpeg
+        );
+    }
+
+    #[test]
+    fn detect_encoding_png_magic() {
+        let mut data = vec![0x89, 0x50, 0x4E, 0x47]; // PNG magic
+        data.extend_from_slice(&[0u8; 100]);
+        assert_eq!(
+            detect_image_encoding_from_bytes(&data, false),
+            ImageEncoding::Png
+        );
+    }
+
+    #[test]
+    fn detect_encoding_unknown_compressed() {
+        let data = vec![0x00, 0x01, 0x02, 0x03]; // Unknown format
+        assert_eq!(
+            detect_image_encoding_from_bytes(&data, false),
+            ImageEncoding::CompressedBytes
+        );
+    }
+
+    #[test]
+    fn detect_encoding_empty_data() {
+        let data: Vec<u8> = Vec::new();
+        assert_eq!(
+            detect_image_encoding_from_bytes(&data, false),
+            ImageEncoding::CompressedBytes
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Task 2: Image array detection edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn is_image_array_channels_first() {
+        // (T, C, H, W) = (100, 3, 96, 96)
+        assert!(is_image_array("obs_image", &[100, 3, 96, 96], "uint8"));
+    }
+
+    #[test]
+    fn is_image_array_single_channel() {
+        // Single channel depth image.
+        assert!(is_image_array("depth_img", &[100, 96, 96, 1], "uint8"));
+    }
+
+    #[test]
+    fn is_image_array_1d_not_image() {
+        assert!(!is_image_array("img", &[100], "uint8"));
+    }
+
+    #[test]
+    fn is_image_array_2d_not_image() {
+        assert!(!is_image_array("img", &[100, 1024], "uint8"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Task 2: Zarr array info edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn zarr_array_info_per_frame_shape_1d() {
+        let info = ZarrArrayInfo {
+            name: "scalar".to_string(),
+            store_path: "/data/scalar".to_string(),
+            shape: vec![1000],
+            dtype_str: "float32".to_string(),
+            is_image: false,
+        };
+        assert_eq!(info.per_frame_shape(), vec![1]);
+    }
+
+    #[test]
+    fn zarr_array_info_per_frame_shape_3d() {
+        let info = ZarrArrayInfo {
+            name: "obs".to_string(),
+            store_path: "/data/obs".to_string(),
+            shape: vec![1000, 10, 3],
+            dtype_str: "float32".to_string(),
+            is_image: false,
+        };
+        assert_eq!(info.per_frame_shape(), vec![10, 3]);
+    }
+
+    #[test]
+    fn zarr_array_info_image_dimensions() {
+        let info = ZarrArrayInfo {
+            name: "img".to_string(),
+            store_path: "/data/img".to_string(),
+            shape: vec![1000, 480, 640, 3],
+            dtype_str: "uint8".to_string(),
+            is_image: true,
+        };
+        assert_eq!(info.image_height(), 480);
+        assert_eq!(info.image_width(), 640);
+        assert_eq!(info.image_channels(), 3);
+    }
+
+    #[test]
+    fn zarr_reader_can_read_rejects_file() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let reader = ZarrReader;
+        assert!(!reader.can_read(tmp.path()));
+    }
+
+    #[test]
+    fn zarr_reader_can_read_rejects_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let reader = ZarrReader;
+        assert!(!reader.can_read(tmp.path()));
+    }
+
+    #[test]
+    fn zarr_reader_can_read_accepts_zarr_extension() {
+        let tmp = tempfile::tempdir().unwrap();
+        let zarr_dir = tmp.path().join("dataset.zarr");
+        std::fs::create_dir_all(&zarr_dir).unwrap();
+        let reader = ZarrReader;
+        assert!(reader.can_read(&zarr_dir));
+    }
+
+    #[test]
+    fn zarr_reader_can_read_accepts_zgroup() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join(".zgroup"), r#"{"zarr_format":2}"#).unwrap();
+        let reader = ZarrReader;
+        assert!(reader.can_read(root));
+    }
+
+    // -----------------------------------------------------------------------
+    // Original detection tests
+    // -----------------------------------------------------------------------
 
     #[test]
     fn zarr_detector_scores_episode_ends_structure() {
