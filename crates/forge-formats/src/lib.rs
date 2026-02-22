@@ -5,11 +5,15 @@
 //! [`registry`] of supported formats and their capabilities, and a scored
 //! [`detection`] engine for auto-detecting dataset formats.
 //!
-//! Currently supported formats:
-//! - **lerobot-v3** -- LeRobot v3 (Parquet + MP4 video) [read + write]
-//!
-//! Additional formats (RLDS, HDF5, Zarr, ROS bags, etc.) will be added in
-//! Phase 5-6.
+//! Supported formats (8 total):
+//! - **lerobot-v3** -- LeRobot v3 (Parquet + MP4 video) \[read + write\]
+//! - **lerobot-v2** -- LeRobot v2 (per-episode Parquet + MP4) \[read\]
+//! - **groot** -- GR00T / NVIDIA Isaac (LeRobot v2 variant) \[read\]
+//! - **hdf5** -- HDF5 (robomimic, ACT/ALOHA) \[read, feature = "hdf5-format"\]
+//! - **zarr** -- Zarr v2 (Diffusion Policy, UMI) \[read, feature = "zarr-format"\]
+//! - **rlds** -- RLDS/TFRecord (Open-X Embodiment) \[read, feature = "rlds-format"\]
+//! - **rosbag** -- ROS bags (ROS 1 .bag + ROS 2 MCAP) \[read, feature = "rosbag-format"\]
+//! - **robodm** -- RoboDM (Berkeley .vla) \[read, feature = "robodm-format"\]
 
 pub mod detection;
 pub mod groot;

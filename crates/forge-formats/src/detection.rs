@@ -19,6 +19,8 @@ use crate::lerobot_v2::LeRobotV2Detector;
 use crate::lerobot_v3::reader::LeRobotV3Reader;
 #[cfg(feature = "rlds-format")]
 use crate::rlds::RLDSDetector;
+#[cfg(feature = "robodm-format")]
+use crate::robodm::RoboDMDetector;
 #[cfg(feature = "rosbag-format")]
 use crate::rosbag::RosbagDetector;
 use crate::traits::FormatReader;
@@ -70,19 +72,20 @@ pub fn detect_format_scored(path: &Path) -> ForgeResult<Vec<DetectionResult>> {
     // Register all available detectors. Order: most specific first.
     // New detectors are added here as format readers are implemented.
     let detectors: Vec<Box<dyn FormatDetector>> = vec![
-        // Phase 5 detectors: most specific first.
-        Box::new(GR00TDetector), // Must be before LeRobotV2 (more specific)
-        // Box::new(RoboDMDetector),
+        // All 8 format detectors, most specific first.
+        Box::new(GR00TDetector), // NVIDIA-specific v2 variant (must be before v2)
+        Box::new(LeRobotV3Detector), // v3 before v2
+        Box::new(LeRobotV2Detector), // v2 after v3
+        #[cfg(feature = "robodm-format")]
+        Box::new(RoboDMDetector), // .vla extension unique
         #[cfg(feature = "rlds-format")]
-        Box::new(RLDSDetector),
+        Box::new(RLDSDetector), // .tfrecord files
         #[cfg(feature = "zarr-format")]
-        Box::new(ZarrDetector),
+        Box::new(ZarrDetector), // .zarr / .zarray
         #[cfg(feature = "hdf5-format")]
-        Box::new(HDF5Detector),
+        Box::new(HDF5Detector), // .hdf5 / .h5
         #[cfg(feature = "rosbag-format")]
-        Box::new(RosbagDetector),
-        Box::new(LeRobotV3Detector),
-        Box::new(LeRobotV2Detector),
+        Box::new(RosbagDetector), // .bag / .mcap
     ];
 
     let mut results: Vec<DetectionResult> = detectors

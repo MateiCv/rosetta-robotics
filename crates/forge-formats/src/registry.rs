@@ -16,6 +16,8 @@ use crate::lerobot_v3::reader::LeRobotV3Reader;
 use crate::lerobot_v3::writer::LeRobotV3Writer;
 #[cfg(feature = "rlds-format")]
 use crate::rlds::RLDSReader;
+#[cfg(feature = "robodm-format")]
+use crate::robodm::RoboDMReader;
 #[cfg(feature = "rosbag-format")]
 use crate::rosbag::RosbagReader;
 use crate::traits::{FormatReader, FormatWriter};
@@ -37,8 +39,10 @@ pub struct FormatCapability {
 
 /// All dataset formats known to Forge.
 ///
-/// Returns a static slice of [`FormatCapability`] entries. New formats are
-/// added to this array as their reader/writer implementations land.
+/// Returns a static slice of [`FormatCapability`] entries covering all 8
+/// supported robotics dataset formats. Formats behind optional feature
+/// flags are always listed (for user-facing display) but require the
+/// corresponding feature to be enabled for actual reading.
 pub fn all_formats() -> &'static [FormatCapability] {
     static FORMATS: &[FormatCapability] = &[
         FormatCapability {
@@ -59,67 +63,48 @@ pub fn all_formats() -> &'static [FormatCapability] {
             can_write: false,
             description: "GR00T / NVIDIA Isaac (LeRobot v2 with NVIDIA markers)",
         },
+        FormatCapability {
+            name: "hdf5",
+            can_read: true,
+            can_write: false,
+            description: "HDF5 (robomimic, ACT/ALOHA)",
+        },
+        FormatCapability {
+            name: "zarr",
+            can_read: true,
+            can_write: false,
+            description: "Zarr v2 (Diffusion Policy, UMI)",
+        },
+        FormatCapability {
+            name: "rlds",
+            can_read: true,
+            can_write: false,
+            description: "RLDS/TFRecord (Open-X Embodiment)",
+        },
+        FormatCapability {
+            name: "rosbag",
+            can_read: true,
+            can_write: false,
+            description: "ROS bags (ROS 1 .bag + ROS 2 MCAP)",
+        },
+        FormatCapability {
+            name: "robodm",
+            can_read: true,
+            can_write: false,
+            description: "RoboDM (Berkeley .vla)",
+        },
     ];
     FORMATS
 }
 
 /// Attempt to auto-detect the dataset format at `path`.
 ///
-/// Iterates over registered format readers and returns the first format
-/// whose `can_read()` returns `true`.
+/// Delegates to the scored detection engine ([`detect_format_scored`]) and
+/// returns the format name of the highest-confidence match. The scored
+/// system handles ambiguity warnings automatically.
 pub fn detect_format(path: &Path) -> ForgeResult<&'static str> {
-    // Check each registered reader in priority order (most specific first).
-    let v3_reader = LeRobotV3Reader;
-    if v3_reader.can_read(path) {
-        return Ok("lerobot-v3");
-    }
-
-    // GR00T must be checked before plain v2 (more specific).
-    let groot_reader = GR00TReader::new();
-    if groot_reader.can_read(path) {
-        return Ok("groot");
-    }
-
-    let v2_reader = LeRobotV2Reader;
-    if v2_reader.can_read(path) {
-        return Ok("lerobot-v2");
-    }
-
-    #[cfg(feature = "rlds-format")]
-    {
-        let rlds_reader = RLDSReader;
-        if rlds_reader.can_read(path) {
-            return Ok("rlds");
-        }
-    }
-
-    #[cfg(feature = "zarr-format")]
-    {
-        let zarr_reader = ZarrReader;
-        if zarr_reader.can_read(path) {
-            return Ok("zarr");
-        }
-    }
-
-    #[cfg(feature = "hdf5-format")]
-    {
-        let hdf5_reader = HDF5Reader;
-        if hdf5_reader.can_read(path) {
-            return Ok("hdf5");
-        }
-    }
-
-    #[cfg(feature = "rosbag-format")]
-    {
-        let rosbag_reader = RosbagReader;
-        if rosbag_reader.can_read(path) {
-            return Ok("rosbag");
-        }
-    }
-
-    Err(ForgeError::FormatDetection {
-        path: path.to_path_buf(),
-    })
+    let results = crate::detection::detect_format_scored(path)?;
+    Ok(results[0].format_name)
 }
 
 /// Get a boxed format reader for the given format name.
@@ -128,14 +113,16 @@ pub fn get_reader(format_name: &str) -> ForgeResult<Box<dyn FormatReader>> {
         "lerobot-v3" => Ok(Box::new(LeRobotV3Reader)),
         "lerobot-v2" => Ok(Box::new(LeRobotV2Reader)),
         "groot" => Ok(Box::new(GR00TReader::new())),
-        #[cfg(feature = "rlds-format")]
-        "rlds" => Ok(Box::new(RLDSReader)),
-        #[cfg(feature = "zarr-format")]
-        "zarr" => Ok(Box::new(ZarrReader)),
         #[cfg(feature = "hdf5-format")]
         "hdf5" => Ok(Box::new(HDF5Reader)),
+        #[cfg(feature = "zarr-format")]
+        "zarr" => Ok(Box::new(ZarrReader)),
+        #[cfg(feature = "rlds-format")]
+        "rlds" => Ok(Box::new(RLDSReader)),
         #[cfg(feature = "rosbag-format")]
         "rosbag" => Ok(Box::new(RosbagReader)),
+        #[cfg(feature = "robodm-format")]
+        "robodm" => Ok(Box::new(RoboDMReader)),
         _ => Err(ForgeError::UnsupportedFormat {
             format_name: format_name.to_string(),
             available: all_formats().iter().map(|f| f.name.to_string()).collect(),
