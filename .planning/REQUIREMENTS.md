@@ -56,13 +56,13 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **QUAL-05**: Timestamp regularity metric identifies irregular frame timing
 - [x] **QUAL-06**: Action saturation metric identifies episodes where actions hit limits
 - [x] **QUAL-07**: Action entropy metric measures action diversity
-- [ ] **QUAL-08**: Composite quality score combines all metrics with configurable weights
-- [ ] **QUAL-09**: Quality analysis results exportable as JSON for downstream tools
+- [x] **QUAL-08**: Composite quality score combines all metrics with configurable weights
+- [x] **QUAL-09**: Quality analysis results exportable as JSON for downstream tools
 - [ ] **QUAL-10**: Episode filtering selects/removes episodes by quality score threshold and individual flags
 - [ ] **QUAL-11**: Filtering supports dry-run mode showing what would be filtered without writing
 - [ ] **QUAL-12**: SIMD-accelerated quality metric hot paths (jerk computation, histogram binning, entropy) via pulp or ndarray auto-vectorization
 - [ ] **QUAL-13**: Streaming single-pass quality analysis computes metrics incrementally per-frame with O(1) memory
-- [ ] **QUAL-14**: Early exit terminates quality analysis when composite score bounds are determined
+- [x] **QUAL-14**: Early exit terminates quality analysis when composite score bounds are determined
 - [ ] **QUAL-15**: Lazy episode filtering evaluates metadata-only before loading full episode data
 
 ### CLI and Configuration
@@ -174,13 +174,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 | QUAL-05 | Phase 4 | Complete |
 | QUAL-06 | Phase 4 | Complete |
 | QUAL-07 | Phase 4 | Complete |
-| QUAL-08 | Phase 4 | Pending |
-| QUAL-09 | Phase 4 | Pending |
+| QUAL-08 | Phase 4 | Complete |
+| QUAL-09 | Phase 4 | Complete |
 | QUAL-10 | Phase 4 | Pending |
 | QUAL-11 | Phase 4 | Pending |
 | QUAL-12 | Phase 4 | Pending |
 | QUAL-13 | Phase 4 | Pending |
-| QUAL-14 | Phase 4 | Pending |
+| QUAL-14 | Phase 4 | Complete |
 | QUAL-15 | Phase 4 | Pending |
 | CLI-01 | Phase 7 | Pending |
 | CLI-02 | Phase 7 | Pending |
