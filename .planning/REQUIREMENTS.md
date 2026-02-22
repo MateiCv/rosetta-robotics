@@ -42,7 +42,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 - [x] **VID-01**: H.264 MP4 video encoder produces LeRobot v3-compatible videos with matching CRF, preset, profile, and pixel format
 - [x] **VID-02**: Video decoder reads MP4/video files from LeRobot v3 and other video-containing formats
-- [ ] **VID-03**: Zero-copy video pipeline borrows frames through read-transform-encode chain without intermediate allocations
+- [x] **VID-03**: Zero-copy video pipeline borrows frames through read-transform-encode chain without intermediate allocations
 - [ ] **VID-04**: Prefetching frame decoder uses ring buffer to decode next episode's video while writing current episode
 - [x] **VID-05**: Video frame count in Parquet timestamp column exactly matches frames in MP4 files (no off-by-one errors)
 - [x] **VID-06**: Keyframes forced at episode boundaries in multi-episode MP4 files for deterministic seeking
@@ -163,7 +163,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | WRIT-07 | Phase 6 | Pending |
 | VID-01 | Phase 2 | Complete |
 | VID-02 | Phase 2 | Complete |
-| VID-03 | Phase 3 | Pending |
+| VID-03 | Phase 3 | Complete |
 | VID-04 | Phase 3 | Pending |
 | VID-05 | Phase 2 | Complete |
 | VID-06 | Phase 2 | Complete |

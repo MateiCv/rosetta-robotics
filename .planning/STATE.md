@@ -5,21 +5,21 @@
 See: .planning/PROJECT.md (updated 2026-02-21)
 
 **Core value:** Convert any robotics dataset format to any other format as fast as the hardware allows, without losing data fidelity.
-**Current focus:** Phase 2 - LeRobot v3 End-to-End Pipeline
+**Current focus:** Phase 3 - Parallel Pipeline and Error Handling
 
 ## Current Position
 
-Phase: 2 of 8 (LeRobot v3 End-to-End Pipeline) -- COMPLETE
-Plan: 4 of 4 in current phase (all complete)
-Status: Phase 2 complete
-Last activity: 2026-02-22 -- Completed 02-04 Writer and Conversion Pipeline
+Phase: 3 of 8 (Parallel Pipeline and Error Handling)
+Plan: 1 of 3 in current phase (1 complete)
+Status: Executing Phase 3
+Last activity: 2026-02-22 -- Completed 03-01 Foundation Dependencies and Zero-Copy Frames
 
-Progress: [██████████] 100% (Phase 2)
+Progress: [███-------] 33% (Phase 3)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 6
+- Total plans completed: 7
 - Average duration: 6min
 - Total execution time: 0.6 hours
 
@@ -34,6 +34,7 @@ Progress: [██████████] 100% (Phase 2)
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 03 P01 | 3min | 2 tasks | 8 files |
 | Phase 02 P04 | 9min | 2 tasks | 14 files |
 | Phase 02 P03 | 7min | 2 tasks | 10 files |
 | Phase 02 P01 | 11min | 2 tasks | 5 files |
@@ -67,6 +68,9 @@ Recent decisions affecting current work:
 - [Phase 02]: Per-episode Parquet files within chunks (writer); reader scans file_index 0..N for compatibility
 - [Phase 02]: get_writer() returns default 30fps/unknown writer; Converter configures from ConversionConfig
 - [Phase 02]: Converter handles error continuation (fail_on_error=false) and camera remapping
+- [Phase 03]: num_workers default 0 means auto-detect all CPU cores (was 1 for sequential)
+- [Phase 03]: EpisodeFailure is a standalone struct, not a ForgeError variant, for flexible error collection
+- [Phase 03]: Bytes::from(Vec<u8>) for zero-copy frame sharing -- takes ownership of Vec allocation and wraps in Arc
 
 ### Pending Todos
 
@@ -79,5 +83,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Completed 02-04-PLAN.md (Writer and Conversion Pipeline -- Phase 2 complete)
+Stopped at: Completed 03-01-PLAN.md (Foundation Dependencies and Zero-Copy Frames)
 Resume file: None
