@@ -46,15 +46,20 @@ pub fn run(
         .clone()
         .unwrap_or_else(|| "lerobot-v3".to_string());
 
+    // Pre-resolve hf:// URLs to local cache path (CLI-16).
+    // We use resolve_path() directly rather than resolve_and_detect() because
+    // the Converter already handles format detection internally.
+    let resolved_source = crate::hub_client::resolve_path(source)?;
+
     // Print header to stderr (not stdout) so --json output is clean on stdout.
     if !quiet && !json {
-        eprintln!("Converting: {} -> {}", source, output);
+        eprintln!("Converting: {} -> {}", resolved_source.display(), output);
         eprintln!("Target format: {}", effective_target);
     }
 
     let converter = Converter::new(config);
 
-    match converter.convert(Path::new(source), Path::new(output)) {
+    match converter.convert(&resolved_source, Path::new(output)) {
         Ok(result) => {
             // Print summary to stderr (unless json mode -- Converter already printed JSON).
             if !quiet && !json {
