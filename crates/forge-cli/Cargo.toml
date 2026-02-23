@@ -25,3 +25,4 @@ serde_json.workspace = true
 serde_yaml_ng.workspace = true
 indicatif.workspace = true
 anyhow = "1"
+image.workspace = true

@@ -3,20 +3,20 @@
 //! Subcommands:
 //! - `version` -- Show version and build info
 //! - `formats` -- List all supported dataset formats
+//! - `inspect` -- Inspect a dataset (schema, cameras, fields, episodes)
 //! - `convert` -- Convert a dataset from one format to another
+//! - `export-video` -- Export episodes as standalone MP4 video files
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use forge_pipeline::Converter;
-
 mod commands;
 mod config;
+mod hub_client;
 mod output;
 
 use output::OutputFormat;
-
 
 #[derive(Parser)]
 #[command(
@@ -85,6 +85,24 @@ enum Commands {
         #[arg(short, long)]
         verbose: bool,
     },
+    /// Export episodes as standalone MP4 video files
+    #[command(name = "export-video")]
+    ExportVideo {
+        /// Dataset path
+        path: String,
+        /// Output directory for video files
+        #[arg(long, short, default_value = "./videos")]
+        output: String,
+        /// Episode indices to export (e.g., "0,1,5" or "0-5"). Default: all
+        #[arg(long)]
+        episodes: Option<String>,
+        /// Camera name to export (default: all cameras)
+        #[arg(long)]
+        camera: Option<String>,
+        /// Override FPS for exported videos
+        #[arg(long)]
+        fps: Option<f64>,
+    },
 }
 
 fn main() {
@@ -116,7 +134,7 @@ fn main() {
             quiet,
             json,
             verbose,
-        } => run_convert(
+        } => commands::convert::run(
             &source,
             &output,
             config_path.as_deref(),
@@ -129,75 +147,23 @@ fn main() {
             json,
             verbose,
         ),
+        Commands::ExportVideo {
+            path,
+            output,
+            episodes,
+            camera,
+            fps,
+        } => commands::export_video::run(
+            &path,
+            &output,
+            episodes.as_deref(),
+            camera.as_deref(),
+            fps,
+        ),
     };
 
     if let Err(e) = result {
         eprintln!("Error: {e}");
         std::process::exit(1);
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn run_convert(
-    source: &str,
-    output: &str,
-    config_path: Option<&Path>,
-    source_format: Option<&str>,
-    target_format: Option<&str>,
-    fail_on_error: bool,
-    deterministic: bool,
-    threads: Option<usize>,
-    quiet: bool,
-    json: bool,
-    verbose: bool,
-) -> anyhow::Result<()> {
-    let config = config::load_config(
-        config_path,
-        source_format,
-        target_format,
-        None, // fps
-        &[],  // cameras
-        fail_on_error,
-        deterministic,
-        threads,
-        quiet,
-        json,
-        verbose,
-    )?;
-
-    let effective_target = config
-        .target_format
-        .clone()
-        .unwrap_or_else(|| "lerobot-v3".to_string());
-
-    // Print header to stderr (not stdout) so --json output is clean on stdout.
-    if !quiet && !json {
-        eprintln!("Converting: {} -> {}", source, output);
-        eprintln!("Target format: {}", effective_target);
-    }
-
-    let converter = Converter::new(config);
-
-    match converter.convert(Path::new(source), Path::new(output)) {
-        Ok(result) => {
-            // Print summary to stderr (unless json mode -- Converter already printed JSON).
-            if !quiet && !json {
-                eprintln!("\nConversion complete:");
-                eprintln!("  Episodes converted: {}", result.episodes_converted);
-                eprintln!("  Episodes failed:    {}", result.episodes_failed);
-                eprintln!("  Total frames:       {}", result.total_frames);
-            }
-
-            // Non-zero exit code if any episodes failed (CI-friendly).
-            if result.episodes_failed > 0 {
-                std::process::exit(1);
-            }
-
-            Ok(())
-        }
-        Err(e) => {
-            eprintln!("Error: {e}");
-            std::process::exit(1);
-        }
     }
 }
