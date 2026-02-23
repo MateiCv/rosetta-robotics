@@ -1,8 +1,8 @@
 //! Shared output formatting utilities for CLI commands.
 //!
 //! Provides [`OutputFormat`] for toggling between human-readable text and
-//! machine-readable JSON output, plus table formatting helpers and the
-//! shared [`resolve_and_detect`] entry point for path-accepting commands.
+//! machine-readable JSON output, plus the shared [`resolve_and_detect`]
+//! entry point for path-accepting commands.
 
 use std::path::PathBuf;
 
@@ -33,36 +33,6 @@ pub fn print_json<T: serde::Serialize>(value: &T) -> Result<()> {
     let json = serde_json::to_string_pretty(value)?;
     println!("{json}");
     Ok(())
-}
-
-/// Print a fixed-width table to stdout.
-///
-/// `headers` and `col_widths` must have the same length. Each row in `rows`
-/// must also have the same number of columns.
-pub fn print_table(headers: &[&str], rows: &[Vec<String>], col_widths: &[usize]) {
-    // Print header row.
-    let header_line: String = headers
-        .iter()
-        .zip(col_widths.iter())
-        .map(|(h, w)| format!("{:<width$}", h, width = w))
-        .collect::<Vec<_>>()
-        .join(" ");
-    println!("{header_line}");
-
-    // Print separator.
-    let total_width: usize = col_widths.iter().sum::<usize>() + col_widths.len() - 1;
-    println!("{}", "-".repeat(total_width));
-
-    // Print data rows.
-    for row in rows {
-        let line: String = row
-            .iter()
-            .zip(col_widths.iter())
-            .map(|(cell, w)| format!("{:<width$}", cell, width = w))
-            .collect::<Vec<_>>()
-            .join(" ");
-        println!("{line}");
-    }
 }
 
 /// Shared entry point for all path-accepting commands (CLI-16 pattern).
