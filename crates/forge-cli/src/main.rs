@@ -17,6 +17,7 @@ mod output;
 
 use output::OutputFormat;
 
+
 #[derive(Parser)]
 #[command(
     name = "forge",
@@ -38,6 +39,17 @@ enum Commands {
         /// Output as JSON instead of a table
         #[arg(long)]
         json: bool,
+    },
+    /// Inspect a dataset: show schema, cameras, fields, episode count
+    Inspect {
+        /// Dataset path to inspect
+        path: String,
+        /// Output as JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+        /// Generate a YAML conversion config template from this dataset
+        #[arg(long, value_name = "PATH")]
+        generate_config: Option<PathBuf>,
     },
     /// Convert a dataset from one format to another
     Convert {
@@ -83,6 +95,15 @@ fn main() {
         Commands::Formats { json } => {
             commands::formats::run(OutputFormat::from_json_flag(json))
         }
+        Commands::Inspect {
+            path,
+            json,
+            generate_config,
+        } => commands::inspect::run(
+            &path,
+            OutputFormat::from_json_flag(json),
+            generate_config.as_deref(),
+        ),
         Commands::Convert {
             source,
             output,
