@@ -186,8 +186,14 @@ enum HubCommands {
     Upload {
         /// Local dataset path
         path: String,
-        /// Target HuggingFace repo ID
+        /// Target HuggingFace repo ID (e.g., user/my-dataset)
         repo: String,
+        /// HuggingFace API token (overrides HF_TOKEN env var)
+        #[arg(long, env = "HF_TOKEN")]
+        token: Option<String>,
+        /// Create a private repository
+        #[arg(long)]
+        private: bool,
     },
 }
 
@@ -285,8 +291,8 @@ fn main() {
                 output.as_deref(),
                 token.as_deref(),
             ),
-            HubCommands::Upload { path, repo } => {
-                commands::hub::run_upload(&path, &repo)
+            HubCommands::Upload { path, repo, token, private } => {
+                commands::hub::run_upload(&path, &repo, token.as_deref(), private)
             }
         },
         Commands::Visualize { path } => commands::visualize::run(&path),

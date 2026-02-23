@@ -47,14 +47,44 @@ pub fn run_download(
     Ok(())
 }
 
-/// Upload a dataset to HuggingFace Hub (stub -- not yet implemented).
+/// Upload a dataset to HuggingFace Hub.
 ///
-/// Prints a helpful message directing the user to the Python CLI.
-pub fn run_upload(path: &str, repo: &str) -> Result<()> {
-    eprintln!("Hub upload is not yet implemented.");
-    eprintln!("This feature is planned for the next release.");
-    eprintln!("For now, use the Python huggingface_hub CLI:");
-    eprintln!("  huggingface-cli upload {} {}", repo, path);
+/// Validates the local path, requires authentication, creates the repo
+/// (idempotent), and uploads all files with LFS for large files (>=10 MB).
+pub fn run_upload(path: &str, repo: &str, token: Option<&str>, private: bool) -> Result<()> {
+    // Validate local path exists and is a directory.
+    let local_path = std::path::Path::new(path);
+    if !local_path.exists() {
+        anyhow::bail!("Dataset path does not exist: {path}");
+    }
+    if !local_path.is_dir() {
+        anyhow::bail!("Dataset path is not a directory: {path}");
+    }
+
+    // Require a token for upload.
+    let token = token.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Upload requires authentication. Set HF_TOKEN environment variable \
+             or pass --token <token>.\n\
+             Get a write-scoped token at: https://huggingface.co/settings/tokens"
+        )
+    })?;
+
+    let uploader = crate::hub_upload::HubUploader::new(token.to_string());
+
+    // Create repo (idempotent -- 409 is handled as success).
+    eprintln!("Creating repository: {repo}");
+    uploader.create_repo(repo, private)?;
+
+    // Upload all files.
+    eprintln!("Uploading dataset from: {path}");
+    uploader.upload_folder(repo, local_path)?;
+
+    // Print verification hint.
+    eprintln!();
+    eprintln!("Verify: forge hub download {repo}");
+    eprintln!("   URL: https://huggingface.co/datasets/{repo}");
+
     Ok(())
 }
 
