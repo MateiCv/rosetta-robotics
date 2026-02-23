@@ -64,10 +64,10 @@ Plans:
   1. `forge convert hf://lerobot/aloha ./out` resolves the hf:// URL to local cache path before conversion (CLI-16)
   2. `forge filter ./groot-dataset ./out --dry-run` succeeds without acquiring a writer for the read-only format (CLI-04)
   3. Unused `print_table` dead code removed from `output.rs` (tech debt cleanup)
-**Plans**: TBD
+**Plans**: 1 plan
 
 Plans:
-- [ ] 07.1-01: TBD
+- [ ] 07.1-01-PLAN.md — Fix convert hf:// resolution, filter dry-run NopWriter, remove dead print_table
 
 ### Phase 8: Hub Upload, Visualization, and Distribution
 **Goal**: Users can push datasets to HuggingFace Hub, explore datasets interactively in the terminal, and install Forge as a single binary on any major platform
@@ -98,5 +98,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 | 5. Remaining Format Readers | v2.0 | 8/8 | Complete | 2026-02-22 |
 | 6. Remaining Format Writers | v2.0 | 4/4 | Complete | 2026-02-22 |
 | 7. CLI, Configuration, and Hub Download | Next | Complete    | 2026-02-23 | - |
-| 7.1 CLI Integration Fixes | Next | 0/? | Not started | - |
+| 7.1 CLI Integration Fixes | Next | 0/1 | Not started | - |
 | 8. Hub Upload, Visualization, and Distribution | Next | 0/? | Not started | - |
