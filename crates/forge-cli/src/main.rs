@@ -9,12 +9,13 @@
 //! - `filter` -- Filter episodes by quality criteria
 //! - `stats` -- Show dataset statistics with distribution analysis
 //! - `export-video` -- Export episodes as standalone MP4 video files
+//! - `hub` -- HuggingFace Hub operations (download, upload)
 //! - `visualize` -- Interactive dataset viewer (placeholder)
 //! - `completions` -- Generate shell completion scripts
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 
 mod commands;
 mod config;
