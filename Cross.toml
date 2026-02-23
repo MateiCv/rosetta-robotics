@@ -1,0 +1,8 @@
+[target.aarch64-unknown-linux-gnu]
+# Use pre-build hook to install FFmpeg and HDF5 dev libs in the cross container.
+# cross runs this script inside the Docker container before building.
+pre-build = [
+    "dpkg --add-architecture arm64",
+    "apt-get update",
+    "apt-get install -y libavcodec-dev:arm64 libavformat-dev:arm64 libavutil-dev:arm64 libavfilter-dev:arm64 libavdevice-dev:arm64 libswscale-dev:arm64 libswresample-dev:arm64 libhdf5-dev:arm64 pkg-config"
+]
