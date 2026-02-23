@@ -11,6 +11,32 @@ use forge_quality::{FilterConfig, FilterEngine, QualityConfig};
 
 use crate::output::OutputFormat;
 
+/// No-op writer for dry-run mode where no output is written (CLI-04).
+struct NopWriter;
+
+impl forge_formats::FormatWriter for NopWriter {
+    fn format_name(&self) -> &str {
+        "nop"
+    }
+
+    fn write_episode(
+        &mut self,
+        _episode: &forge_core::Episode,
+        _output_path: &std::path::Path,
+        _episode_index: usize,
+    ) -> forge_core::ForgeResult<()> {
+        Ok(())
+    }
+
+    fn finalize(
+        &mut self,
+        _output_path: &std::path::Path,
+        _dataset_info: &forge_core::DatasetInfo,
+    ) -> forge_core::ForgeResult<()> {
+        Ok(())
+    }
+}
+
 /// Run episode filtering on a dataset.
 ///
 /// Resolves the path, auto-detects the format, creates a filter engine with
@@ -34,7 +60,18 @@ pub fn run(
 
     let (resolved_path, format_name) = crate::output::resolve_and_detect(path)?;
     let reader = forge_formats::get_reader(&format_name)?;
-    let mut writer = forge_formats::get_writer(&format_name)?;
+
+    // Only acquire a real writer for non-dry-run; use NopWriter for dry-run
+    // so read-only formats (groot) work with --dry-run (CLI-04).
+    let mut real_writer;
+    let mut nop;
+    let writer: &mut dyn forge_formats::FormatWriter = if dry_run {
+        nop = NopWriter;
+        &mut nop
+    } else {
+        real_writer = forge_formats::get_writer(&format_name)?;
+        &mut *real_writer
+    };
 
     let quality_config = if let Some(cfg_path) = config_path {
         QualityConfig::from_yaml(cfg_path)?
@@ -59,7 +96,7 @@ pub fn run(
 
     let result = engine.filter(
         reader.as_ref(),
-        writer.as_mut(),
+        writer,
         &resolved_path,
         output_path,
     )?;
