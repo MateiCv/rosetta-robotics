@@ -5,14 +5,15 @@
 See: .planning/PROJECT.md (updated 2026-02-22)
 
 **Core value:** Convert any robotics dataset format to any other format as fast as the hardware allows, without losing data fidelity.
-**Current focus:** Planning next milestone (CLI, Hub, Visualization, Distribution)
+**Current focus:** Phase 7 — CLI, Configuration, and Hub Download
 
 ## Current Position
 
-Milestone: Between milestones (v2.0 shipped, next TBD)
-Phase: None active
-Status: Milestone Complete
-Last activity: 2026-02-22 — v2.0 Format Breadth shipped
+Milestone: Next (Phases 7-8)
+Phase: 07-cli-configuration-and-hub-download
+Current Plan: 2 of 5
+Status: In Progress
+Last activity: 2026-02-23 — Completed 07-01 (CLI refactoring, config, field remapping)
 
 ## Performance Metrics
 
@@ -29,9 +30,15 @@ Last activity: 2026-02-22 — v2.0 Format Breadth shipped
 - Lines of Rust added: 14,654
 - Tests at completion: 366
 
+**Phase 7 Velocity:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| 07-01 | 4min | 2 | 9 |
+
 **Cumulative:**
-- Total plans completed: 26
-- Total lines of Rust: 24,628
+- Total plans completed: 27
+- Total lines of Rust: ~25,200
 - Total tests: 366
 
 ## Accumulated Context
@@ -43,6 +50,11 @@ Full decision logs archived in:
 - `.planning/milestones/v2.0-ROADMAP.md`
 
 Key decisions carried forward to PROJECT.md Key Decisions table.
+
+**Phase 7 decisions:**
+- Field remapping renames metadata keys only; transform support deferred with warning
+- FormatInfo wrapper for JSON serialization (avoids modifying forge-formats)
+- Config merge uses boolean flag presence detection for CLI overrides
 
 ### Pending Todos
 
@@ -62,11 +74,11 @@ Key items:
 - stats.json empty placeholder in LeRobot writers
 - Python interop validation deferred for all format writers
 - HDF5 requires system libHDF5 (excluded from default features)
-- Field remapping stub (from v1.0)
+- ~~Field remapping stub (from v1.0)~~ RESOLVED in 07-01
 
 ## Session Continuity
 
-Last session: 2026-02-22
-Stopped at: v2.0 milestone archived
-Next: `/gsd:new-milestone` for CLI, Hub, Visualization, Distribution
+Last session: 2026-02-23
+Stopped at: Completed 07-01-PLAN.md
+Next: Execute 07-02-PLAN.md (Inspect subcommand and convert enhancement)
 Resume file: .planning/ROADMAP.md

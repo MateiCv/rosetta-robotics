@@ -49,7 +49,7 @@ See: `.planning/milestones/v2.0-ROADMAP.md` for full details.
 **Plans**: 5 plans
 
 Plans:
-- [ ] 07-01-PLAN.md — CLI refactoring, modular command structure, YAML config loading, field remapping
+- [x] 07-01-PLAN.md — CLI refactoring, modular command structure, YAML config loading, field remapping
 - [ ] 07-02-PLAN.md — Inspect subcommand (text/JSON/generate-config) and convert enhancement
 - [ ] 07-03-PLAN.md — Quality analysis, episode filtering, and dataset statistics subcommands
 - [ ] 07-04-PLAN.md — HuggingFace Hub download with auth/caching and upload stub
@@ -83,5 +83,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 | 4. Quality Analysis and Filtering | v1.0 | 4/4 | Complete | 2026-02-22 |
 | 5. Remaining Format Readers | v2.0 | 8/8 | Complete | 2026-02-22 |
 | 6. Remaining Format Writers | v2.0 | 4/4 | Complete | 2026-02-22 |
-| 7. CLI, Configuration, and Hub Download | Next | 0/5 | Planned | - |
+| 7. CLI, Configuration, and Hub Download | Next | 1/5 | In Progress | - |
 | 8. Hub Upload, Visualization, and Distribution | Next | 0/? | Not started | - |
