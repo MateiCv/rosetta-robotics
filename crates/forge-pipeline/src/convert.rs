@@ -326,16 +326,40 @@ impl Converter {
     }
 
     /// Apply field remapping from the conversion config (static version for parallel use).
+    ///
+    /// For each entry in `config.fields`, renames metadata keys in both
+    /// episode-level and per-frame metadata. The `source` field of each
+    /// [`FieldMapping`](forge_core::FieldMapping) identifies the original
+    /// key, and `target` is the new key name.
+    ///
+    /// Transform support (normalize, clip, etc.) is deferred -- a warning
+    /// is logged if `transform` is set.
     fn apply_field_remapping_static(config: &ConversionConfig, episode: &mut Episode) {
-        // Field remapping is handled at the data level in future phases.
-        // For Phase 2, the reader already produces canonical "action" and
-        // "observation.state" field names matching the LeRobot v3 writer's
-        // expectations, so no remapping is needed for same-format conversion.
-        //
-        // When cross-format conversion is added (Phase 5+), this method
-        // will use config.fields to rename/transform data fields.
-        let _ = &config.fields;
-        let _ = episode;
+        if config.fields.is_empty() {
+            return;
+        }
+
+        for (_logical_name, mapping) in &config.fields {
+            // Warn about unsupported transforms.
+            if mapping.transform.is_some() {
+                eprintln!(
+                    "warning: field transforms not yet supported, only rename (field: {} -> {})",
+                    mapping.source, mapping.target
+                );
+            }
+
+            // Rename in episode-level metadata.
+            if let Some(value) = episode.metadata.remove(&mapping.source) {
+                episode.metadata.insert(mapping.target.clone(), value);
+            }
+
+            // Rename in per-frame metadata.
+            for frame in &mut episode.frames {
+                if let Some(value) = frame.metadata.remove(&mapping.source) {
+                    frame.metadata.insert(mapping.target.clone(), value);
+                }
+            }
+        }
     }
 
     /// Apply camera key remapping from the conversion config (static version for parallel use).
