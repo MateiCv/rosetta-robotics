@@ -5,12 +5,17 @@
 //! - `formats` -- List all supported dataset formats
 //! - `convert` -- Convert a dataset from one format to another
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 
-use forge_core::ConversionConfig;
 use forge_pipeline::Converter;
+
+mod commands;
+mod config;
+mod output;
+
+use output::OutputFormat;
 
 #[derive(Parser)]
 #[command(
@@ -29,16 +34,26 @@ enum Commands {
     /// Show version, build info, and FFmpeg availability
     Version,
     /// List all supported dataset formats
-    Formats,
+    Formats {
+        /// Output as JSON instead of a table
+        #[arg(long)]
+        json: bool,
+    },
     /// Convert a dataset from one format to another
     Convert {
         /// Source dataset path
         source: String,
         /// Output dataset path
         output: String,
-        /// Target format
-        #[arg(long, default_value = "lerobot-v3")]
-        target_format: String,
+        /// Path to a YAML configuration file
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Source format (auto-detected if not specified)
+        #[arg(long)]
+        source_format: Option<String>,
+        /// Target format (default: lerobot-v3)
+        #[arg(long)]
+        target_format: Option<String>,
         /// Stop on first episode failure (default: continue and report all failures)
         #[arg(long)]
         fail_on_error: bool,
@@ -63,12 +78,16 @@ enum Commands {
 fn main() {
     let cli = Cli::parse();
 
-    match cli.command {
-        Commands::Version => print_version(),
-        Commands::Formats => print_formats(),
+    let result = match cli.command {
+        Commands::Version => commands::version::run(),
+        Commands::Formats { json } => {
+            commands::formats::run(OutputFormat::from_json_flag(json))
+        }
         Commands::Convert {
             source,
             output,
+            config: config_path,
+            source_format,
             target_format,
             fail_on_error,
             deterministic,
@@ -79,7 +98,9 @@ fn main() {
         } => run_convert(
             &source,
             &output,
-            &target_format,
+            config_path.as_deref(),
+            source_format.as_deref(),
+            target_format.as_deref(),
             fail_on_error,
             deterministic,
             threads,
@@ -87,59 +108,11 @@ fn main() {
             json,
             verbose,
         ),
-    }
-}
+    };
 
-fn print_version() {
-    println!("forge {}", env!("CARGO_PKG_VERSION"));
-
-    // Git commit SHA (set in build.rs)
-    if let Some(sha) = option_env!("GIT_SHA") {
-        println!("git commit: {sha}");
-    }
-
-    // Build timestamp (set in build.rs)
-    if let Some(ts) = option_env!("BUILD_TIMESTAMP") {
-        println!("built: {ts}");
-    }
-
-    // Target triple (set in build.rs)
-    if let Some(target) = option_env!("BUILD_TARGET") {
-        println!("target: {target}");
-    }
-
-    // FFmpeg availability (runtime check)
-    match std::process::Command::new("ffmpeg")
-        .arg("-version")
-        .output()
-    {
-        Ok(output) if output.status.success() => {
-            let version_line = String::from_utf8_lossy(&output.stdout);
-            if let Some(line) = version_line.lines().next() {
-                println!("ffmpeg: {line}");
-            }
-        }
-        _ => {
-            println!("ffmpeg: not found (required for video operations)");
-        }
-    }
-}
-
-fn print_formats() {
-    let formats = forge_formats::all_formats();
-    println!("Supported formats:\n");
-    println!(
-        "{:<20} {:<8} {:<8} Description",
-        "Format", "Read", "Write"
-    );
-    println!("{}", "-".repeat(65));
-    for fmt in formats {
-        let read = if fmt.can_read { "yes" } else { "-" };
-        let write = if fmt.can_write { "yes" } else { "-" };
-        println!(
-            "{:<20} {:<8} {:<8} {}",
-            fmt.name, read, write, fmt.description
-        );
+    if let Err(e) = result {
+        eprintln!("Error: {e}");
+        std::process::exit(1);
     }
 }
 
@@ -147,32 +120,42 @@ fn print_formats() {
 fn run_convert(
     source: &str,
     output: &str,
-    target_format: &str,
+    config_path: Option<&Path>,
+    source_format: Option<&str>,
+    target_format: Option<&str>,
     fail_on_error: bool,
     deterministic: bool,
     threads: Option<usize>,
     quiet: bool,
     json: bool,
     verbose: bool,
-) {
-    let config = ConversionConfig {
-        target_format: Some(target_format.to_string()),
+) -> anyhow::Result<()> {
+    let config = config::load_config(
+        config_path,
+        source_format,
+        target_format,
+        None, // fps
+        &[],  // cameras
         fail_on_error,
         deterministic,
-        num_workers: threads.unwrap_or(0),
+        threads,
         quiet,
-        json_output: json,
+        json,
         verbose,
-        ..ConversionConfig::default()
-    };
+    )?;
 
-    let converter = Converter::new(config);
+    let effective_target = config
+        .target_format
+        .clone()
+        .unwrap_or_else(|| "lerobot-v3".to_string());
 
     // Print header to stderr (not stdout) so --json output is clean on stdout.
     if !quiet && !json {
         eprintln!("Converting: {} -> {}", source, output);
-        eprintln!("Target format: {}", target_format);
+        eprintln!("Target format: {}", effective_target);
     }
+
+    let converter = Converter::new(config);
 
     match converter.convert(Path::new(source), Path::new(output)) {
         Ok(result) => {
@@ -188,6 +171,8 @@ fn run_convert(
             if result.episodes_failed > 0 {
                 std::process::exit(1);
             }
+
+            Ok(())
         }
         Err(e) => {
             eprintln!("Error: {e}");
