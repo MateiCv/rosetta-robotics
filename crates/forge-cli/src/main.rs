@@ -22,6 +22,7 @@ mod config;
 mod hub_client;
 mod hub_upload;
 mod output;
+mod tui;
 
 use output::OutputFormat;
 

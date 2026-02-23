@@ -54,3 +54,5 @@ forge-pipeline = { path = "crates/forge-pipeline" }
 image = "0.25"
 sha2 = "0.10"
 ureq = { version = "2", features = ["json"] }
+ratatui = { version = "0.29", features = ["crossterm"] }
+crossterm = "0.28"

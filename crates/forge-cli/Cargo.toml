@@ -28,6 +28,8 @@ anyhow = "1"
 image.workspace = true
 sha2.workspace = true
 ureq.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
