@@ -52,3 +52,5 @@ forge-video = { path = "crates/forge-video" }
 forge-quality = { path = "crates/forge-quality" }
 forge-pipeline = { path = "crates/forge-pipeline" }
 image = "0.25"
+sha2 = "0.10"
+ureq = { version = "2", features = ["json"] }

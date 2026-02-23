@@ -20,6 +20,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 mod commands;
 mod config;
 mod hub_client;
+mod hub_upload;
 mod output;
 
 use output::OutputFormat;
