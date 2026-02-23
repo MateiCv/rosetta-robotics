@@ -55,6 +55,20 @@ Plans:
 - [x] 07-04-PLAN.md — HuggingFace Hub download with auth/caching and upload stub
 - [x] 07-05-PLAN.md — Video export, visualize placeholder, and shell completions
 
+### Phase 7.1: CLI Integration Fixes
+**Goal**: Fix 2 integration bugs found during milestone audit — `forge convert` hf:// URL resolution and `forge filter` dry-run on read-only formats
+**Depends on**: Phase 7
+**Requirements**: CLI-04, CLI-16
+**Gap Closure**: Closes gaps from `next-MILESTONE-AUDIT.md`
+**Success Criteria** (what must be TRUE):
+  1. `forge convert hf://lerobot/aloha ./out` resolves the hf:// URL to local cache path before conversion (CLI-16)
+  2. `forge filter ./groot-dataset ./out --dry-run` succeeds without acquiring a writer for the read-only format (CLI-04)
+  3. Unused `print_table` dead code removed from `output.rs` (tech debt cleanup)
+**Plans**: TBD
+
+Plans:
+- [ ] 07.1-01: TBD
+
 ### Phase 8: Hub Upload, Visualization, and Distribution
 **Goal**: Users can push datasets to HuggingFace Hub, explore datasets interactively in the terminal, and install Forge as a single binary on any major platform
 **Depends on**: Phase 7
@@ -84,4 +98,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 | 5. Remaining Format Readers | v2.0 | 8/8 | Complete | 2026-02-22 |
 | 6. Remaining Format Writers | v2.0 | 4/4 | Complete | 2026-02-22 |
 | 7. CLI, Configuration, and Hub Download | Next | Complete    | 2026-02-23 | - |
+| 7.1 CLI Integration Fixes | Next | 0/? | Not started | - |
 | 8. Hub Upload, Visualization, and Distribution | Next | 0/? | Not started | - |
