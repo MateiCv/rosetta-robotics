@@ -78,11 +78,11 @@ Plans:
   2. Interactive dataset viewer displays camera frames, action/state timeseries, and supports episode navigation in the terminal
   3. Video export renders episodes as standalone MP4 files, and stats command displays per-field distributions (mean, std, min, max)
   4. Pre-built binaries are available for Linux x86_64, Linux aarch64, macOS x86_64, macOS aarch64, and Windows x86_64 via GitHub releases
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 08-01: TBD
-- [ ] 08-02: TBD
+- [ ] 08-01-PLAN.md — Hub upload via HF HTTP commit API with LFS for large files
+- [ ] 08-02-PLAN.md — Interactive TUI dataset viewer with camera frames, timeseries, and episode navigation
 
 ## Progress
 
@@ -99,4 +99,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 | 6. Remaining Format Writers | v2.0 | 4/4 | Complete | 2026-02-22 |
 | 7. CLI, Configuration, and Hub Download | Next | Complete    | 2026-02-23 | - |
 | 7.1 CLI Integration Fixes | Next | 0/1 | Not started | - |
-| 8. Hub Upload, Visualization, and Distribution | Next | 0/? | Not started | - |
+| 8. Hub Upload, Visualization, and Distribution | Next | 0/2 | Not started | - |
