@@ -142,6 +142,44 @@ enum Commands {
         #[arg(long)]
         fps: Option<f64>,
     },
+    /// HuggingFace Hub operations
+    Hub {
+        #[command(subcommand)]
+        action: HubCommands,
+    },
+    /// Interactive dataset viewer
+    Visualize {
+        /// Dataset path
+        path: String,
+    },
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for (bash, zsh, fish, elvish, powershell)
+        #[arg(value_parser = clap::value_parser!(clap_complete::aot::Shell))]
+        shell: clap_complete::aot::Shell,
+    },
+}
+
+#[derive(Subcommand)]
+enum HubCommands {
+    /// Download a dataset from HuggingFace Hub
+    Download {
+        /// HuggingFace repo ID (e.g., lerobot/aloha) or hf:// URL
+        repo: String,
+        /// Output directory (default: print cache path)
+        #[arg(long, short, value_name = "PATH")]
+        output: Option<PathBuf>,
+        /// HuggingFace API token (overrides HF_TOKEN env var)
+        #[arg(long, env = "HF_TOKEN")]
+        token: Option<String>,
+    },
+    /// Upload a dataset to HuggingFace Hub
+    Upload {
+        /// Local dataset path
+        path: String,
+        /// Target HuggingFace repo ID
+        repo: String,
+    },
 }
 
 fn main() {
@@ -225,6 +263,25 @@ fn main() {
             camera.as_deref(),
             fps,
         ),
+        Commands::Hub { action } => match action {
+            HubCommands::Download {
+                repo,
+                output,
+                token,
+            } => commands::hub::run_download(
+                &repo,
+                output.as_deref(),
+                token.as_deref(),
+            ),
+            HubCommands::Upload { path, repo } => {
+                commands::hub::run_upload(&path, &repo)
+            }
+        },
+        Commands::Visualize { path } => commands::visualize::run(&path),
+        Commands::Completions { shell } => {
+            let mut cmd = Cli::command();
+            commands::completions::run(shell, &mut cmd)
+        }
     };
 
     if let Err(e) = result {
