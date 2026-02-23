@@ -11,9 +11,9 @@ See: .planning/PROJECT.md (updated 2026-02-22)
 
 Milestone: Next (Phases 7-8)
 Phase: 07-cli-configuration-and-hub-download
-Current Plan: 3 of 5
-Status: In Progress
-Last activity: 2026-02-23 — Completed 07-02 (Inspect subcommand and convert enhancement)
+Current Plan: 5 of 5
+Status: Complete
+Last activity: 2026-02-23 — Completed 07-05 (Export-video, visualize, completions)
 
 ## Performance Metrics
 
@@ -36,11 +36,13 @@ Last activity: 2026-02-23 — Completed 07-02 (Inspect subcommand and convert en
 |------|----------|-------|-------|
 | 07-01 | 4min | 2 | 9 |
 | 07-02 | 5min | 2 | 4 |
+| 07-03 | 6min | 2 | 5 |
+| 07-04 | 7min | 2 | 6 |
 
 **Cumulative:**
-- Total plans completed: 28
-- Total lines of Rust: ~25,200
-- Total tests: 366
+- Total plans completed: 30
+- Total lines of Rust: ~25,800
+- Total tests: 380
 
 ## Accumulated Context
 
@@ -58,6 +60,11 @@ Key decisions carried forward to PROJECT.md Key Decisions table.
 - Config merge uses boolean flag presence detection for CLI overrides
 - YAML config generation uses manual line building with comments (not serde_yaml serialization)
 - Inspect sorts metadata keys alphabetically for consistent output
+- Added clap env feature for HF_TOKEN env var integration in hub download
+- resolve_path() does not check existence; deferred to resolve_and_detect()
+- Hub upload is a graceful stub (Ok) not an error, directing to Python CLI
+- Stats uses streaming Welford-like accumulation for online mean/std -- no second pass needed
+- Filter requires output path for non-dry-run (validates early with user-friendly error message)
 
 ### Pending Todos
 
@@ -82,6 +89,6 @@ Key items:
 ## Session Continuity
 
 Last session: 2026-02-23
-Stopped at: Completed 07-02-PLAN.md
-Next: Execute 07-03-PLAN.md (Quality, filter, and stats subcommands)
+Stopped at: Completed 07-04-PLAN.md
+Next: Execute 07-05-PLAN.md (Shell completions, visualize placeholder, final polish)
 Resume file: .planning/ROADMAP.md
