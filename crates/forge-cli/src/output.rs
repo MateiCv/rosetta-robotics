@@ -4,7 +4,7 @@
 //! machine-readable JSON output, plus table formatting helpers and the
 //! shared [`resolve_and_detect`] entry point for path-accepting commands.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
@@ -67,21 +67,20 @@ pub fn print_table(headers: &[&str], rows: &[Vec<String>], col_widths: &[usize])
 
 /// Shared entry point for all path-accepting commands (CLI-16 pattern).
 ///
-/// Resolves a user-provided path string to a local [`PathBuf`] and detects
-/// the dataset format. In wave 1, paths are treated as local only. Plan 07-04
-/// will update this function to transparently handle `hf://` URLs by calling
-/// `hub_client::resolve_path(path)` before detection.
+/// Resolves a user-provided path string to a local [`PathBuf`] -- transparently
+/// handling `hf://` URLs via [`crate::hub_client::resolve_path`] -- then detects
+/// the dataset format.
 ///
 /// All subcommands that accept a dataset path MUST call this function instead
 /// of calling `detect_format()` directly.
 pub fn resolve_and_detect(path: &str) -> Result<(PathBuf, String)> {
-    let resolved = PathBuf::from(path);
+    let resolved = crate::hub_client::resolve_path(path)?;
     anyhow::ensure!(
         resolved.exists(),
         "path does not exist: {}",
         resolved.display()
     );
-    let format = forge_formats::detect_format(Path::new(path))
+    let format = forge_formats::detect_format(&resolved)
         .with_context(|| format!("failed to detect format for {}", resolved.display()))?;
     Ok((resolved, format.to_string()))
 }

@@ -5,6 +5,9 @@
 //! - `formats` -- List all supported dataset formats
 //! - `inspect` -- Inspect a dataset (schema, cameras, fields, episodes)
 //! - `convert` -- Convert a dataset from one format to another
+//! - `quality` -- Run quality analysis on a dataset
+//! - `filter` -- Filter episodes by quality criteria
+//! - `stats` -- Show dataset statistics with distribution analysis
 //! - `export-video` -- Export episodes as standalone MP4 video files
 
 use std::path::PathBuf;
