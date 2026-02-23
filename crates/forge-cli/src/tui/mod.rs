@@ -22,7 +22,8 @@ use forge_core::{DatasetInfo, Episode, Frame};
 pub struct App {
     /// All episodes loaded from the dataset.
     episodes: Vec<Episode>,
-    /// Dataset metadata.
+    /// Dataset metadata (retained for future FPS/robot-type display).
+    #[allow(dead_code)]
     info: DatasetInfo,
     /// Current episode index.
     current_episode: usize,
