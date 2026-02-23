@@ -50,10 +50,10 @@ See: `.planning/milestones/v2.0-ROADMAP.md` for full details.
 
 Plans:
 - [x] 07-01-PLAN.md — CLI refactoring, modular command structure, YAML config loading, field remapping
-- [ ] 07-02-PLAN.md — Inspect subcommand (text/JSON/generate-config) and convert enhancement
-- [ ] 07-03-PLAN.md — Quality analysis, episode filtering, and dataset statistics subcommands
-- [ ] 07-04-PLAN.md — HuggingFace Hub download with auth/caching and upload stub
-- [ ] 07-05-PLAN.md — Video export, visualize placeholder, and shell completions
+- [x] 07-02-PLAN.md — Inspect subcommand (text/JSON/generate-config) and convert enhancement
+- [x] 07-03-PLAN.md — Quality analysis, episode filtering, and dataset statistics subcommands
+- [x] 07-04-PLAN.md — HuggingFace Hub download with auth/caching and upload stub
+- [x] 07-05-PLAN.md — Video export, visualize placeholder, and shell completions
 
 ### Phase 8: Hub Upload, Visualization, and Distribution
 **Goal**: Users can push datasets to HuggingFace Hub, explore datasets interactively in the terminal, and install Forge as a single binary on any major platform
