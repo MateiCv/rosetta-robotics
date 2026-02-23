@@ -38,11 +38,12 @@ Last activity: 2026-02-23 — Completed 07-05 (Export-video, visualize, completi
 | 07-02 | 5min | 2 | 4 |
 | 07-03 | 6min | 2 | 5 |
 | 07-04 | 7min | 2 | 6 |
+| 07-05 | 6min | 2 | 7 |
 
 **Cumulative:**
-- Total plans completed: 30
-- Total lines of Rust: ~25,800
-- Total tests: 380
+- Total plans completed: 31
+- Total lines of Rust: ~26,100
+- Total tests: 387
 
 ## Accumulated Context
 
@@ -65,6 +66,9 @@ Key decisions carried forward to PROJECT.md Key Decisions table.
 - Hub upload is a graceful stub (Ok) not an error, directing to Python CLI
 - Stats uses streaming Welford-like accumulation for online mean/std -- no second pass needed
 - Filter requires output path for non-dry-run (validates early with user-friendly error message)
+- Image encoding dispatch uses match on ImageEncoding for Raw/JPEG/PNG transparency via image crate
+- Visualize is a placeholder printing dataset summary; full TUI deferred to Phase 8 VIZ-01
+- Shell completions use runtime clap_complete::aot::generate, keeping binary self-contained
 
 ### Pending Todos
 
@@ -89,6 +93,6 @@ Key items:
 ## Session Continuity
 
 Last session: 2026-02-23
-Stopped at: Completed 07-04-PLAN.md
-Next: Execute 07-05-PLAN.md (Shell completions, visualize placeholder, final polish)
+Stopped at: Completed 07-05-PLAN.md — Phase 7 complete (all 5 plans)
+Next: Phase 8 (Visualization and TUI) or milestone audit
 Resume file: .planning/ROADMAP.md
