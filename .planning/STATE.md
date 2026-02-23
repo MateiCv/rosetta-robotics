@@ -11,9 +11,9 @@ See: .planning/PROJECT.md (updated 2026-02-22)
 
 Milestone: Next (Phases 7-8)
 Phase: 08-hub-upload-visualization-and-distribution
-Current Plan: 1 of 3
+Current Plan: 3 of 3
 Status: In Progress
-Last activity: 2026-02-23 — Completed 08-01 (Hub upload: HubUploader HTTP client, LFS presigned uploads, --token/--private CLI)
+Last activity: 2026-02-23 — Completed 08-03 (Cross-platform binary distribution via GitHub Actions release workflow)
 
 ## Performance Metrics
 
@@ -51,9 +51,10 @@ Last activity: 2026-02-23 — Completed 08-01 (Hub upload: HubUploader HTTP clie
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | 08-01 | 4min | 2 | 5 |
+| 08-03 | 2min | 2 | 2 |
 
 **Cumulative:**
-- Total plans completed: 33
+- Total plans completed: 34
 - Total lines of Rust: ~26,600
 - Total tests: 393
 
@@ -90,6 +91,9 @@ Key decisions carried forward to PROJECT.md Key Decisions table.
 - Synchronous ureq HTTP client (no async/tokio) matching project convention from hub_client.rs
 - Manual multipart body construction instead of external multipart crate -- keeps dependencies minimal
 - 10 MB LFS threshold constant matching HuggingFace Hub default
+- Linux aarch64 cross-compilation is best-effort (continue-on-error) due to FFmpeg/HDF5 system lib cross-compile complexity
+- macOS uses native runners: macos-13 for Intel, macos-14 for Apple Silicon
+- Failure cascade prevention via step ID outcome checks in GitHub Actions workflow
 
 ### Pending Todos
 
@@ -114,6 +118,6 @@ Key items:
 ## Session Continuity
 
 Last session: 2026-02-23
-Stopped at: Completed 08-01-PLAN.md — Hub upload implementation (1/3 plans in Phase 8)
-Next: 08-02-PLAN.md (TUI visualization) or 08-03-PLAN.md (distribution)
+Stopped at: Completed 08-03-PLAN.md — Cross-platform binary distribution (2/3 plans in Phase 8)
+Next: 08-02-PLAN.md (TUI visualization) -- last remaining plan in Phase 8
 Resume file: .planning/ROADMAP.md
