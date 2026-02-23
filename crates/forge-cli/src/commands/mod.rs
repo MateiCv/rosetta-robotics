@@ -10,5 +10,6 @@ pub mod formats;
 pub mod hub;
 pub mod inspect;
 pub mod quality;
+pub mod stats;
 pub mod version;
 pub mod visualize;

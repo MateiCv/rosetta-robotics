@@ -124,6 +124,14 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Show dataset statistics with per-field distribution analysis
+    Stats {
+        /// Dataset path to analyze
+        path: String,
+        /// Output as JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
     /// Export episodes as standalone MP4 video files
     #[command(name = "export-video")]
     ExportVideo {
@@ -250,6 +258,9 @@ fn main() {
             config.as_deref(),
             OutputFormat::from_json_flag(json),
         ),
+        Commands::Stats { path, json } => {
+            commands::stats::run(&path, OutputFormat::from_json_flag(json))
+        }
         Commands::ExportVideo {
             path,
             output,
