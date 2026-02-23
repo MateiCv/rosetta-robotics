@@ -9,6 +9,8 @@
 //! - `filter` -- Filter episodes by quality criteria
 //! - `stats` -- Show dataset statistics with distribution analysis
 //! - `export-video` -- Export episodes as standalone MP4 video files
+//! - `visualize` -- Interactive dataset viewer (placeholder)
+//! - `completions` -- Generate shell completion scripts
 
 use std::path::PathBuf;
 
@@ -88,6 +90,39 @@ enum Commands {
         #[arg(short, long)]
         verbose: bool,
     },
+    /// Run quality analysis on a dataset
+    Quality {
+        /// Dataset path to analyze
+        path: String,
+        /// Path to a quality config YAML file
+        #[arg(long, value_name = "PATH")]
+        config: Option<PathBuf>,
+        /// Output as JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+        /// Save the quality report as JSON to a file
+        #[arg(long, value_name = "PATH")]
+        save_json: Option<PathBuf>,
+    },
+    /// Filter episodes by quality criteria
+    Filter {
+        /// Source dataset path
+        path: String,
+        /// Output dataset path (required unless --dry-run)
+        output: Option<String>,
+        /// Minimum composite quality score to keep an episode (0.0-1.0)
+        #[arg(long)]
+        min_quality: Option<f64>,
+        /// Preview filter results without writing output
+        #[arg(long)]
+        dry_run: bool,
+        /// Path to a quality config YAML file
+        #[arg(long, value_name = "PATH")]
+        config: Option<PathBuf>,
+        /// Output as JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
     /// Export episodes as standalone MP4 video files
     #[command(name = "export-video")]
     ExportVideo {
@@ -149,6 +184,32 @@ fn main() {
             quiet,
             json,
             verbose,
+        ),
+        Commands::Quality {
+            path,
+            config,
+            json,
+            save_json,
+        } => commands::quality::run(
+            &path,
+            config.as_deref(),
+            OutputFormat::from_json_flag(json),
+            save_json.as_deref(),
+        ),
+        Commands::Filter {
+            path,
+            output,
+            min_quality,
+            dry_run,
+            config,
+            json,
+        } => commands::filter::run(
+            &path,
+            output.as_deref(),
+            min_quality,
+            dry_run,
+            config.as_deref(),
+            OutputFormat::from_json_flag(json),
         ),
         Commands::ExportVideo {
             path,
