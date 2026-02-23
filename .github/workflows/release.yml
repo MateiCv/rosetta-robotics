@@ -68,7 +68,7 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install hdf5
 
-      - name: Install FFmpeg and HDF5 (Windows)
+      - name: Install FFmpeg (Windows)
         if: runner.os == 'Windows'
         run: |
           choco install ffmpeg-full -y
@@ -79,6 +79,7 @@ jobs:
         run: cargo install cross --locked
 
       - name: Build (cross)
+        id: cross_build
         if: matrix.use_cross
         continue-on-error: true
         run: cross build --release --target ${{ matrix.target }} -p forge-cli
@@ -88,7 +89,7 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }} -p forge-cli
 
       - name: Package (Unix)
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && !(matrix.use_cross && steps.cross_build.outcome == 'failure')
         run: |
           cd target/${{ matrix.target }}/release
           tar czf ../../../forge-${{ github.ref_name }}-${{ matrix.name }}.tar.gz forge
@@ -98,11 +99,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path target/${{ matrix.target }}/release/forge.exe -DestinationPath forge-${{ env.TAG }}-${{ matrix.name }}.zip
-        env:
-          TAG: ${{ github.ref_name }}
+          Compress-Archive -Path target/${{ matrix.target }}/release/forge.exe -DestinationPath forge-${{ github.ref_name }}-${{ matrix.name }}.zip
 
       - name: Upload artifact
+        if: ${{ !(matrix.use_cross && steps.cross_build.outcome == 'failure') }}
         uses: actions/upload-artifact@v4
         with:
           name: forge-${{ matrix.name }}
