@@ -5,15 +5,15 @@
 See: .planning/PROJECT.md (updated 2026-02-22)
 
 **Core value:** Convert any robotics dataset format to any other format as fast as the hardware allows, without losing data fidelity.
-**Current focus:** Phase 7 — CLI, Configuration, and Hub Download
+**Current focus:** Phase 7.1 — CLI Integration Fixes (gap closure)
 
 ## Current Position
 
 Milestone: Next (Phases 7-8)
-Phase: 07-cli-configuration-and-hub-download
-Current Plan: 5 of 5
+Phase: 07.1-cli-integration-fixes
+Current Plan: 1 of 1
 Status: Complete
-Last activity: 2026-02-23 — Completed 07-05 (Export-video, visualize, completions)
+Last activity: 2026-02-23 — Completed 07.1-01 (CLI integration fixes: hf:// convert, dry-run filter, dead code removal)
 
 ## Performance Metrics
 
@@ -40,8 +40,14 @@ Last activity: 2026-02-23 — Completed 07-05 (Export-video, visualize, completi
 | 07-04 | 7min | 2 | 6 |
 | 07-05 | 6min | 2 | 7 |
 
+**Phase 7.1 Velocity:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| 07.1-01 | 3min | 3 | 3 |
+
 **Cumulative:**
-- Total plans completed: 31
+- Total plans completed: 32
 - Total lines of Rust: ~26,100
 - Total tests: 387
 
@@ -70,6 +76,10 @@ Key decisions carried forward to PROJECT.md Key Decisions table.
 - Visualize is a placeholder printing dataset summary; full TUI deferred to Phase 8 VIZ-01
 - Shell completions use runtime clap_complete::aot::generate, keeping binary self-contained
 
+**Phase 7.1 decisions:**
+- Used resolve_path() directly in convert.rs instead of resolve_and_detect() because Converter handles format detection internally
+- NopWriter approach chosen over FilterEngine API change -- keeps forge-quality API stable, changes local to CLI
+
 ### Pending Todos
 
 None.
@@ -93,6 +103,6 @@ Key items:
 ## Session Continuity
 
 Last session: 2026-02-23
-Stopped at: Completed 07-05-PLAN.md — Phase 7 complete (all 5 plans)
-Next: Phase 8 (Visualization and TUI) or milestone audit
+Stopped at: Completed 07.1-01-PLAN.md — Phase 7.1 complete (1/1 plans, gap closure)
+Next: Phase 8 (Hub Upload, Visualization, and Distribution)
 Resume file: .planning/ROADMAP.md

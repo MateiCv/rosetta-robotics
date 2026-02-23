@@ -67,7 +67,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 07.1-01-PLAN.md — Fix convert hf:// resolution, filter dry-run NopWriter, remove dead print_table
+- [x] 07.1-01-PLAN.md — Fix convert hf:// resolution, filter dry-run NopWriter, remove dead print_table
 
 ### Phase 8: Hub Upload, Visualization, and Distribution
 **Goal**: Users can push datasets to HuggingFace Hub, explore datasets interactively in the terminal, and install Forge as a single binary on any major platform
