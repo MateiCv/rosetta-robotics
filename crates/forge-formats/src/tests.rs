@@ -387,10 +387,11 @@ fn lazy_video_frame_loads_correctly() {
     let read_output = reader.read_episodes(tmp.path()).unwrap();
     let episodes = &read_output.data;
 
-    // Load the first frame's image to verify lazy loading works.
+    // Video frames are now eagerly decoded during read_episodes for performance
+    // (batch decoding eliminates O(N^2) per-frame decoder opens).
     let frame0 = &episodes[0].frames[0];
     let image = frame0.images.get("observation.images.top").unwrap();
-    assert!(!image.is_loaded(), "image should not be loaded yet");
+    assert!(image.is_loaded(), "image should be eagerly loaded");
 
     let data = image.load().unwrap();
     let expected_size = (VIDEO_WIDTH * VIDEO_HEIGHT * 3) as usize;
@@ -400,8 +401,6 @@ fn lazy_video_frame_loads_correctly() {
         "image data size mismatch: got {}, expected {expected_size}",
         data.len()
     );
-
-    assert!(image.is_loaded(), "image should be loaded now");
 }
 
 // ---- Format Registry Tests ----

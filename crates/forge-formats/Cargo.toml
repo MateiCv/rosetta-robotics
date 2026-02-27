@@ -15,11 +15,12 @@ hdf5-format = ["dep:hdf5", "dep:ndarray"]
 zarr-format = ["dep:zarrs"]
 rlds-format = ["dep:tfrecord", "dep:prost", "dep:crc32c", "dep:flate2"]
 rosbag-format = ["dep:mcap", "dep:rosbag"]
-robodm-format = ["dep:ebml-iterable"]
+robodm-format = ["dep:ebml-iterable", "dep:ffmpeg-next"]
 
 [dependencies]
 forge-core.workspace = true
 forge-video.workspace = true
+rayon.workspace = true
 bytes.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -33,6 +34,7 @@ tfrecord = { workspace = true, optional = true }
 mcap = { workspace = true, optional = true }
 rosbag = { workspace = true, optional = true }
 ebml-iterable = { workspace = true, optional = true }
+ffmpeg-next = { workspace = true, optional = true }
 crc32c = { workspace = true, optional = true }
 prost = { workspace = true, optional = true }
 flate2 = { workspace = true, optional = true }

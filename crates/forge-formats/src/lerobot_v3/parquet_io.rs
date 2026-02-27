@@ -105,13 +105,13 @@ pub fn read_episode_metadata(
         for batch in &batches {
             let ep_col = get_i64_column(batch, "episode_index")?;
             let len_col = get_i64_column(batch, "length")?;
-            let task_col = get_i64_column(batch, "task_index")?;
+            let task_col = try_get_i64_column(batch, "task_index")?;
 
             for row in 0..batch.num_rows() {
                 all_meta.push(EpisodeMetadata {
                     episode_index: ep_col.value(row),
                     length: len_col.value(row),
-                    task_index: task_col.value(row),
+                    task_index: task_col.map(|c| c.value(row)).unwrap_or(0),
                 });
             }
         }
@@ -166,16 +166,16 @@ pub fn extract_episode_data(
         let fi_col = get_i64_column(batch, "frame_index")?;
         let idx_col = get_i64_column(batch, "index")?;
         let ts_col = get_f32_column(batch, "timestamp")?;
-        let ti_col = get_i64_column(batch, "task_index")?;
+        let ti_col = try_get_i64_column(batch, "task_index")?;
 
         for &row in &matching_rows {
             frame_indices.push(fi_col.value(row));
             global_indices.push(idx_col.value(row));
             timestamps.push(ts_col.value(row));
-            task_indices.push(ti_col.value(row));
+            task_indices.push(ti_col.map(|c| c.value(row)).unwrap_or(0));
         }
 
-        // Extract FixedSizeList data features.
+        // Extract data features (FixedSizeList or scalar Float32).
         for feat_name in &data_feature_names {
             let col_idx = match batch.schema().index_of(feat_name) {
                 Ok(idx) => idx,
@@ -206,12 +206,35 @@ pub fn extract_episode_data(
                         feat_data.push(vec);
                     }
                 }
-                other => {
-                    return Err(ForgeError::Schema {
-                        field_name: feat_name.clone(),
-                        expected: "FixedSizeList<Float32>".to_string(),
-                        actual: format!("{other:?}"),
-                    });
+                DataType::Float32 => {
+                    let float_col = col
+                        .as_any()
+                        .downcast_ref::<Float32Array>()
+                        .ok_or_else(|| ForgeError::Schema {
+                            field_name: feat_name.clone(),
+                            expected: "Float32".to_string(),
+                            actual: format!("{:?}", col.data_type()),
+                        })?;
+                    for &row in &matching_rows {
+                        feat_data.push(vec![float_col.value(row)]);
+                    }
+                }
+                DataType::Float64 => {
+                    let f64_col = col
+                        .as_any()
+                        .downcast_ref::<arrow::array::Float64Array>()
+                        .ok_or_else(|| ForgeError::Schema {
+                            field_name: feat_name.clone(),
+                            expected: "Float64".to_string(),
+                            actual: format!("{:?}", col.data_type()),
+                        })?;
+                    for &row in &matching_rows {
+                        feat_data.push(vec![f64_col.value(row) as f32]);
+                    }
+                }
+                _ => {
+                    // Skip columns with unsupported types rather than failing.
+                    continue;
                 }
             }
         }
@@ -224,6 +247,106 @@ pub fn extract_episode_data(
         task_indices,
         fields,
     })
+}
+
+/// Extract per-episode data for ALL episodes from RecordBatches in a single pass.
+///
+/// Instead of scanning all batches once per episode (O(episodes * rows)),
+/// this groups rows by `episode_index` in one pass (O(rows)).
+pub fn extract_all_episodes_data(
+    batches: &[RecordBatch],
+    info: &InfoJson,
+) -> ForgeResult<HashMap<i64, EpisodeData>> {
+    let mut result: HashMap<i64, EpisodeData> = HashMap::new();
+
+    // Identify non-video, non-index features that are stored as FixedSizeList.
+    let data_feature_names: Vec<String> = info
+        .data_features()
+        .iter()
+        .filter(|(name, spec)| {
+            !matches!(
+                *name,
+                "frame_index" | "episode_index" | "index" | "timestamp" | "task_index"
+            ) && spec.dtype == "float32"
+        })
+        .map(|(name, _)| name.to_string())
+        .collect();
+
+    for batch in batches {
+        let ep_col = get_i64_column(batch, "episode_index")?;
+        let fi_col = get_i64_column(batch, "frame_index")?;
+        let idx_col = get_i64_column(batch, "index")?;
+        let ts_col = get_f32_column(batch, "timestamp")?;
+        let ti_col = try_get_i64_column(batch, "task_index")?;
+
+        // Pre-resolve feature columns for this batch.
+        let feat_columns: Vec<(String, usize)> = data_feature_names
+            .iter()
+            .filter_map(|name| {
+                batch.schema().index_of(name).ok().map(|idx| (name.clone(), idx))
+            })
+            .collect();
+
+        for row in 0..batch.num_rows() {
+            let episode_index = ep_col.value(row);
+
+            let ep_data = result.entry(episode_index).or_insert_with(|| EpisodeData {
+                frame_indices: Vec::new(),
+                global_indices: Vec::new(),
+                timestamps: Vec::new(),
+                task_indices: Vec::new(),
+                fields: HashMap::new(),
+            });
+
+            ep_data.frame_indices.push(fi_col.value(row));
+            ep_data.global_indices.push(idx_col.value(row));
+            ep_data.timestamps.push(ts_col.value(row));
+            ep_data.task_indices.push(ti_col.map(|c| c.value(row)).unwrap_or(0));
+
+            // Extract data features for this row.
+            for (feat_name, col_idx) in &feat_columns {
+                let col = batch.column(*col_idx);
+                let feat_data = ep_data.fields.entry(feat_name.clone()).or_default();
+
+                match col.data_type() {
+                    DataType::FixedSizeList(_, list_size) => {
+                        let list_size = *list_size as usize;
+                        let list_array = col.as_fixed_size_list();
+                        let values = list_array.values();
+                        if let Some(float_values) = values
+                            .as_any()
+                            .downcast_ref::<Float32Array>()
+                        {
+                            let offset = row * list_size;
+                            let vec: Vec<f32> = (0..list_size)
+                                .map(|i| float_values.value(offset + i))
+                                .collect();
+                            feat_data.push(vec);
+                        }
+                    }
+                    DataType::Float32 => {
+                        if let Some(float_col) = col
+                            .as_any()
+                            .downcast_ref::<Float32Array>()
+                        {
+                            feat_data.push(vec![float_col.value(row)]);
+                        }
+                    }
+                    DataType::Float64 => {
+                        if let Some(f64_col) = col
+                            .as_any()
+                            .downcast_ref::<arrow::array::Float64Array>()
+                        {
+                            feat_data.push(vec![f64_col.value(row) as f32]);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 /// Helper: get an Int64 column by name from a RecordBatch.
@@ -243,6 +366,25 @@ fn get_i64_column<'a>(batch: &'a RecordBatch, name: &str) -> ForgeResult<&'a Int
             expected: "Int64".to_string(),
             actual: format!("{:?}", batch.column(col_idx).data_type()),
         })
+}
+
+/// Helper: try to get an Int64 column, returning `None` if the column is absent.
+fn try_get_i64_column<'a>(batch: &'a RecordBatch, name: &str) -> ForgeResult<Option<&'a Int64Array>> {
+    match batch.schema().index_of(name) {
+        Ok(col_idx) => {
+            let col = batch
+                .column(col_idx)
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .ok_or_else(|| ForgeError::Schema {
+                    field_name: name.to_string(),
+                    expected: "Int64".to_string(),
+                    actual: format!("{:?}", batch.column(col_idx).data_type()),
+                })?;
+            Ok(Some(col))
+        }
+        Err(_) => Ok(None),
+    }
 }
 
 /// Helper: get a Float32 column by name from a RecordBatch.
