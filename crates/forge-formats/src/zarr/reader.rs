@@ -11,9 +11,10 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
+use rayon::prelude::*;
 
 use forge_core::{
     CameraInfo, DatasetInfo, Dtype, Episode, FieldSchema, ForgeError, ForgeResult, Frame,
@@ -96,10 +97,9 @@ impl FormatReader for ZarrReader {
     }
 
     fn read_episodes(&self, path: &Path) -> ForgeResult<ReadOutput<Vec<Episode>>> {
-        let store = open_store(path)?;
-        let store = Arc::new(store);
+        let store = Arc::new(open_store(path)?);
 
-        let mut warnings = Vec::new();
+        let mut init_warnings = Vec::new();
 
         // Read episode boundaries.
         let episode_ends = read_episode_ends_from_store(&store, path)?;
@@ -108,7 +108,7 @@ impl FormatReader for ZarrReader {
         let (valid, validation_msg) = validate_episode_ends(&episode_ends);
         if !valid {
             if let Some(msg) = validation_msg {
-                warnings.push(ReadWarning {
+                init_warnings.push(ReadWarning {
                     episode_id: None,
                     message: format!("Invalid episode_ends: {msg}"),
                     severity: WarningSeverity::Warning,
@@ -118,41 +118,49 @@ impl FormatReader for ZarrReader {
 
         let boundaries = compute_boundaries(&episode_ends);
 
-        // Discover arrays.
-        let array_infos = discover_arrays(&store, path)?;
+        // Discover arrays once — shared across all episodes.
+        let array_infos = Arc::new(discover_arrays(&store, path)?);
 
-        let dataset_path = path.to_path_buf();
-        let mut episodes = Vec::with_capacity(boundaries.len());
+        let warnings = Mutex::new(init_warnings);
 
-        for (ep_idx, &(start, end)) in boundaries.iter().enumerate() {
-            if start >= end {
-                warnings.push(ReadWarning {
-                    episode_id: Some(ep_idx.to_string()),
-                    message: format!(
-                        "Empty episode {ep_idx}: start={start}, end={end}; skipping"
-                    ),
-                    severity: WarningSeverity::Warning,
-                });
-                continue;
-            }
-
-            match build_episode(
-                ep_idx,
-                start,
-                end,
-                &array_infos,
-                &dataset_path,
-            ) {
-                Ok(episode) => episodes.push(episode),
-                Err(e) => {
-                    warnings.push(ReadWarning {
+        // Build all episodes in parallel using rayon.
+        let episode_results: Vec<Option<Episode>> = boundaries
+            .par_iter()
+            .enumerate()
+            .map(|(ep_idx, &(start, end))| {
+                if start >= end {
+                    warnings.lock().unwrap().push(ReadWarning {
                         episode_id: Some(ep_idx.to_string()),
-                        message: format!("Failed to read episode {ep_idx}: {e}"),
-                        severity: WarningSeverity::Error,
+                        message: format!(
+                            "Empty episode {ep_idx}: start={start}, end={end}; skipping"
+                        ),
+                        severity: WarningSeverity::Warning,
                     });
+                    return None;
                 }
-            }
-        }
+
+                match build_episode(
+                    ep_idx,
+                    start,
+                    end,
+                    &array_infos,
+                    &store,
+                ) {
+                    Ok(episode) => Some(episode),
+                    Err(e) => {
+                        warnings.lock().unwrap().push(ReadWarning {
+                            episode_id: Some(ep_idx.to_string()),
+                            message: format!("Failed to read episode {ep_idx}: {e}"),
+                            severity: WarningSeverity::Error,
+                        });
+                        None
+                    }
+                }
+            })
+            .collect();
+
+        let episodes: Vec<Episode> = episode_results.into_iter().flatten().collect();
+        let warnings = warnings.into_inner().unwrap();
 
         Ok(ReadOutput::with_warnings(episodes, warnings))
     }
@@ -711,64 +719,155 @@ pub(crate) fn validate_episode_ends(episode_ends: &[usize]) -> (bool, Option<Str
 // Episode building with lazy loading
 // ---------------------------------------------------------------------------
 
-/// Build a single episode with lazy-loaded arrays and images.
+/// Build a single episode with batch-read arrays and images.
+///
+/// Opens each Array handle once per array, batch-reads the episode slice
+/// `[start..end, :]` in one `retrieve_array_subset` call, then splits into
+/// per-frame data. This reduces from `N_frames * K_arrays` store+array opens
+/// to `K_arrays` opens total per episode.
 fn build_episode(
     ep_idx: usize,
     start: usize,
     end: usize,
     array_infos: &[ZarrArrayInfo],
-    dataset_path: &Path,
+    store: &Arc<FilesystemStore>,
 ) -> ForgeResult<Episode> {
     let mut episode = Episode::new(ep_idx.to_string());
     let num_frames = end - start;
+
+    // Pre-read all array data for this episode in batch.
+    // Numeric arrays: Vec<Vec<f64>> (one inner Vec per frame).
+    // Image arrays: Vec<Bytes> (one Bytes per frame).
+    struct NumericBatch {
+        name: String,
+        per_frame_size: usize,
+        frames: Vec<Vec<f64>>,
+    }
+
+    struct ImageBatch {
+        camera_name: String,
+        height: u32,
+        width: u32,
+        frames: Vec<Bytes>,
+    }
+
+    let mut numeric_batches: Vec<NumericBatch> = Vec::new();
+    let mut image_batches: Vec<ImageBatch> = Vec::new();
+    let mut metadata_infos: Vec<(String, &ZarrArrayInfo)> = Vec::new();
+
+    for info in array_infos {
+        // Skip arrays with insufficient length.
+        if info.shape.is_empty() || (info.shape[0] as usize) < end {
+            // If the array doesn't cover the full episode, skip it.
+            if info.shape.is_empty() || (info.shape[0] as usize) <= start {
+                continue;
+            }
+        }
+
+        let array_name = &info.name;
+
+        if info.is_image {
+            // Batch-read the image slice for this episode.
+            match batch_read_image_array(store, info, start, end) {
+                Ok(frames) => {
+                    let (h, w) = image_dims(info);
+                    image_batches.push(ImageBatch {
+                        camera_name: info.camera_name(),
+                        height: h,
+                        width: w,
+                        frames,
+                    });
+                }
+                Err(_) => {
+                    // Failed to read image array — skip silently.
+                }
+            }
+        } else if array_name == "action"
+            || array_name.contains("action")
+            || array_name.ends_with("/action")
+            || array_name == "state"
+            || array_name == "obs"
+            || array_name.contains("state")
+            || array_name.contains("observation")
+            || array_name.contains("robot_eef")
+            || array_name.contains("joint_pos")
+        {
+            // Batch-read numeric array for this episode.
+            match batch_read_numeric_array(store, info, start, end) {
+                Ok(all_data) => {
+                    let per_frame_size: usize = info.per_frame_shape().iter().product();
+                    let per_frame_size = per_frame_size.max(1);
+                    let frames: Vec<Vec<f64>> = all_data
+                        .chunks(per_frame_size)
+                        .map(|chunk| chunk.to_vec())
+                        .collect();
+                    numeric_batches.push(NumericBatch {
+                        name: array_name.clone(),
+                        per_frame_size,
+                        frames,
+                    });
+                }
+                Err(_) => {
+                    // Failed to read numeric array — skip silently.
+                }
+            }
+        } else {
+            metadata_infos.push((array_name.clone(), info));
+        }
+    }
 
     for frame_idx in 0..num_frames {
         let global_idx = start + frame_idx;
         let mut frame = Frame::new(frame_idx);
 
-        for info in array_infos {
-            // Skip arrays with insufficient length.
+        // Assign numeric arrays.
+        for batch in &numeric_batches {
+            if frame_idx >= batch.frames.len() {
+                continue;
+            }
+            let data = batch.frames[frame_idx].clone();
+            let shape = vec![batch.per_frame_size];
+            let dtype = Dtype::Float32;
+
+            if batch.name == "action"
+                || batch.name.contains("action")
+                || batch.name.ends_with("/action")
+            {
+                frame.action = Some(LazyArray::from_vec(data, shape, dtype));
+            } else {
+                frame.state = Some(LazyArray::from_vec(data, shape, dtype));
+            }
+        }
+
+        // Assign image arrays.
+        for batch in &image_batches {
+            if frame_idx >= batch.frames.len() {
+                continue;
+            }
+            let image = LazyImage::from_bytes(
+                batch.frames[frame_idx].clone(),
+                batch.height,
+                batch.width,
+                3,
+                ImageEncoding::Raw,
+            );
+            frame.images.insert(batch.camera_name.clone(), image);
+        }
+
+        // Preserve metadata references for unknown arrays.
+        for (array_name, info) in &metadata_infos {
             if info.shape.is_empty() || (info.shape[0] as usize) <= global_idx {
                 continue;
             }
-
-            let array_name = info.name.clone();
-
-            if info.is_image {
-                // Create lazy image.
-                let image = create_lazy_image(info, global_idx, dataset_path);
-                let camera_name = info.camera_name();
-                frame.images.insert(camera_name, image);
-            } else if array_name == "action"
-                || array_name.contains("action")
-                || array_name.ends_with("/action")
-            {
-                // Action array.
-                frame.action =
-                    Some(create_lazy_array(info, global_idx, dataset_path));
-            } else if array_name == "state"
-                || array_name == "obs"
-                || array_name.contains("state")
-                || array_name.contains("observation")
-                || array_name.contains("robot_eef")
-                || array_name.contains("joint_pos")
-            {
-                // State/observation array.
-                frame.state =
-                    Some(create_lazy_array(info, global_idx, dataset_path));
-            } else {
-                // Unknown array: preserve as metadata.
-                // Store the array path as a metadata reference (lazy).
-                frame.metadata.insert(
-                    format!("zarr_array:{array_name}"),
-                    serde_json::json!({
-                        "store_path": info.store_path,
-                        "global_index": global_idx,
-                        "shape": info.per_frame_shape(),
-                        "dtype": info.dtype_str,
-                    }),
-                );
-            }
+            frame.metadata.insert(
+                format!("zarr_array:{array_name}"),
+                serde_json::json!({
+                    "store_path": info.store_path,
+                    "global_index": global_idx,
+                    "shape": info.per_frame_shape(),
+                    "dtype": info.dtype_str,
+                }),
+            );
         }
 
         episode.frames.push(frame);
@@ -777,35 +876,17 @@ fn build_episode(
     Ok(episode)
 }
 
-/// Create a lazy-loaded numeric array for a single frame.
-fn create_lazy_array(
+/// Batch-read a numeric array slice `[start..end, :]` and return as flat Vec<f64>.
+fn batch_read_numeric_array(
+    store: &Arc<FilesystemStore>,
     info: &ZarrArrayInfo,
-    global_idx: usize,
-    dataset_path: &Path,
-) -> LazyArray {
-    let store_path = info.store_path.clone();
-    let shape = info.per_frame_shape();
-    let dtype = info.forge_dtype();
-    let ds_path = dataset_path.to_path_buf();
-
-    LazyArray::new(
-        move || load_frame_array(&ds_path, &store_path, global_idx),
-        shape,
-        dtype,
-    )
-}
-
-/// Load a single frame's numeric data from the Zarr array.
-fn load_frame_array(
-    dataset_path: &Path,
-    store_path: &str,
-    global_idx: usize,
+    start: usize,
+    end: usize,
 ) -> Result<Vec<f64>, ForgeError> {
-    let store = Arc::new(open_store(dataset_path)?);
-    let array = Array::open(store, store_path).map_err(|e| {
+    let array = Array::open(store.clone(), &info.store_path).map_err(|e| {
         ForgeError::Inspection {
-            path: dataset_path.to_path_buf(),
-            reason: format!("failed to open array {store_path}: {e}"),
+            path: std::path::PathBuf::from(&info.store_path),
+            reason: format!("failed to open array {}: {e}", info.store_path),
         }
     })?;
 
@@ -814,10 +895,10 @@ fn load_frame_array(
         return Ok(Vec::new());
     }
 
-    // Build subset for single frame: [global_idx, 0..., 0...] to [global_idx+1, shape[1]..., shape[N]]
+    // Build subset for episode slice: [start..end, 0..shape[1], ...]
     let ndim = shape.len();
     let mut ranges = Vec::with_capacity(ndim);
-    ranges.push(global_idx as u64..(global_idx + 1) as u64);
+    ranges.push(start as u64..end as u64);
     for &dim in &shape[1..] {
         ranges.push(0..dim);
     }
@@ -844,93 +925,219 @@ fn load_frame_array(
     }
 
     Err(ForgeError::Inspection {
-        path: dataset_path.to_path_buf(),
+        path: std::path::PathBuf::from(&info.store_path),
         reason: format!(
-            "failed to read array {store_path} frame {global_idx}: unsupported data type"
+            "failed to read array {} frames {start}..{end}: unsupported data type",
+            info.store_path
         ),
     })
 }
 
-/// Create a lazy-loaded image for a single frame.
-fn create_lazy_image(
+/// Batch-read an image array slice `[start..end, H, W, C]` and return per-frame RGB bytes.
+fn batch_read_image_array(
+    store: &Arc<FilesystemStore>,
     info: &ZarrArrayInfo,
-    global_idx: usize,
-    dataset_path: &Path,
-) -> LazyImage {
-    let store_path = info.store_path.clone();
-    let ds_path = dataset_path.to_path_buf();
-    let shape = info.shape.clone();
-
-    let (height, width, channels, encoding) = if shape.len() == 4 {
-        let h = shape[1] as u32;
-        let w = shape[2] as u32;
-        let c = shape[3] as u8;
-        // Channels-first check: (T, C, H, W)
-        if shape[1] <= 4 && shape[2] > 4 && shape[3] > 4 {
-            (shape[2] as u32, shape[3] as u32, shape[1] as u8, ImageEncoding::Raw)
-        } else {
-            (h, w, c, ImageEncoding::Raw)
-        }
-    } else {
-        (0, 0, 3, ImageEncoding::Raw)
-    };
-
-    LazyImage::new(
-        move || load_frame_image(&ds_path, &store_path, global_idx),
-        height,
-        width,
-        channels,
-        encoding,
-    )
-}
-
-/// Load a single frame's image data from the Zarr array.
-fn load_frame_image(
-    dataset_path: &Path,
-    store_path: &str,
-    global_idx: usize,
-) -> Result<Bytes, ForgeError> {
-    let store = Arc::new(open_store(dataset_path)?);
-    let array = Array::open(store, store_path).map_err(|e| {
+    start: usize,
+    end: usize,
+) -> Result<Vec<Bytes>, ForgeError> {
+    let array = Array::open(store.clone(), &info.store_path).map_err(|e| {
         ForgeError::Inspection {
-            path: dataset_path.to_path_buf(),
-            reason: format!("failed to open image array {store_path}: {e}"),
+            path: std::path::PathBuf::from(&info.store_path),
+            reason: format!("failed to open image array {}: {e}", info.store_path),
         }
     })?;
 
     let shape = array.shape();
     if shape.is_empty() {
-        return Ok(Bytes::new());
+        return Ok(Vec::new());
     }
 
-    // Build subset for single frame.
+    let num_frames = end - start;
+    let is_float = info.dtype_str.contains("float")
+        || info.dtype_str.contains("f4")
+        || info.dtype_str.contains("f8");
+
+    // Build subset for episode slice.
     let ndim = shape.len();
     let mut ranges = Vec::with_capacity(ndim);
-    ranges.push(global_idx as u64..(global_idx + 1) as u64);
+    ranges.push(start as u64..end as u64);
     for &dim in &shape[1..] {
         ranges.push(0..dim);
     }
     let subset = ArraySubset::new_with_ranges(&ranges);
 
-    // Read as uint8 (raw pixel data).
-    if let Ok(elements) = array.retrieve_array_subset_elements::<u8>(&subset) {
-        return Ok(Bytes::from(elements));
+    // Calculate per-frame element count (all dims except the first).
+    let per_frame_elements: usize = shape[1..].iter().map(|&d| d as usize).product();
+
+    if is_float {
+        // Float images: read as f32, convert to uint8 RGB.
+        if let Ok(elements) = array.retrieve_array_subset_elements::<f32>(&subset) {
+            let frames: Vec<Bytes> = elements
+                .chunks(per_frame_elements)
+                .map(|chunk| {
+                    let rgb = float_pixels_to_rgb(chunk, shape);
+                    Bytes::from(rgb)
+                })
+                .collect();
+            return Ok(frames);
+        }
+        if let Ok(elements) = array.retrieve_array_subset_elements::<f64>(&subset) {
+            let as_f32: Vec<f32> = elements.into_iter().map(|v| v as f32).collect();
+            let frames: Vec<Bytes> = as_f32
+                .chunks(per_frame_elements)
+                .map(|chunk| {
+                    let rgb = float_pixels_to_rgb(chunk, shape);
+                    Bytes::from(rgb)
+                })
+                .collect();
+            return Ok(frames);
+        }
     }
 
-    // Fallback: read raw bytes.
-    let bytes = array.retrieve_array_subset(&subset).map_err(|e| {
+    // Read as uint8 (raw pixel data).
+    if let Ok(elements) = array.retrieve_array_subset_elements::<u8>(&subset) {
+        let frames: Vec<Bytes> = elements
+            .chunks(per_frame_elements)
+            .map(|chunk| {
+                let rgb = ensure_rgb_u8(chunk, shape);
+                Bytes::from(rgb)
+            })
+            .collect();
+        return Ok(frames);
+    }
+
+    // Fallback: read raw bytes and split per frame.
+    let bytes_result = array.retrieve_array_subset(&subset).map_err(|e| {
         ForgeError::Inspection {
-            path: dataset_path.to_path_buf(),
-            reason: format!("failed to read image data from {store_path}: {e}"),
+            path: std::path::PathBuf::from(&info.store_path),
+            reason: format!("failed to read image data from {}: {e}", info.store_path),
         }
     })?;
-    let raw = bytes.into_fixed().map_err(|e| {
+    let raw = bytes_result.into_fixed().map_err(|e| {
         ForgeError::Inspection {
-            path: dataset_path.to_path_buf(),
+            path: std::path::PathBuf::from(&info.store_path),
             reason: format!("image data is variable-length (unexpected): {e}"),
         }
     })?;
-    Ok(Bytes::from(raw.into_owned()))
+    let raw_bytes = raw.into_owned();
+    let bytes_per_frame = raw_bytes.len() / num_frames.max(1);
+    let frames: Vec<Bytes> = raw_bytes
+        .chunks(bytes_per_frame)
+        .map(|chunk| Bytes::from(chunk.to_vec()))
+        .collect();
+    Ok(frames)
+}
+
+/// Get image dimensions (height, width) from a ZarrArrayInfo.
+fn image_dims(info: &ZarrArrayInfo) -> (u32, u32) {
+    if info.shape.len() == 4 {
+        // Channels-first check: (T, C, H, W)
+        if info.shape[1] <= 4 && info.shape[2] > 4 && info.shape[3] > 4 {
+            (info.shape[2] as u32, info.shape[3] as u32)
+        } else {
+            (info.shape[1] as u32, info.shape[2] as u32)
+        }
+    } else {
+        (0, 0)
+    }
+}
+
+/// Convert float32 pixel data to uint8 RGB.
+///
+/// Handles both [0.0, 1.0] and [0.0, 255.0] ranges, and strips alpha
+/// if the data has 4 channels.
+fn float_pixels_to_rgb(data: &[f32], shape: &[u64]) -> Vec<u8> {
+    let channels = if shape.len() >= 4 {
+        // Detect channels-first (T, C, H, W) vs channels-last (T, H, W, C).
+        if shape[1] <= 4 && shape[2] > 4 && shape[3] > 4 {
+            shape[1] as usize
+        } else {
+            *shape.last().unwrap() as usize
+        }
+    } else {
+        3
+    };
+
+    // Auto-detect value range: if max > 1.0, values are already in [0, 255].
+    let max_val = data.iter().copied().fold(0.0_f32, f32::max);
+    let scale = if max_val > 1.0 { 1.0 } else { 255.0 };
+
+    if channels == 3 {
+        data.iter()
+            .map(|&v| (v * scale).clamp(0.0, 255.0) as u8)
+            .collect()
+    } else if channels == 4 {
+        // RGBA → RGB: drop every 4th value.
+        data.chunks_exact(4)
+            .flat_map(|px| {
+                [
+                    (px[0] * scale).clamp(0.0, 255.0) as u8,
+                    (px[1] * scale).clamp(0.0, 255.0) as u8,
+                    (px[2] * scale).clamp(0.0, 255.0) as u8,
+                ]
+            })
+            .collect()
+    } else if channels == 1 {
+        // Grayscale → RGB: replicate.
+        data.iter()
+            .flat_map(|&v| {
+                let b = (v * scale).clamp(0.0, 255.0) as u8;
+                [b, b, b]
+            })
+            .collect()
+    } else {
+        // Unknown channel count — take first 3 or pad.
+        data.chunks(channels)
+            .flat_map(|px| {
+                [
+                    (px.first().copied().unwrap_or(0.0) * scale).clamp(0.0, 255.0) as u8,
+                    (px.get(1).copied().unwrap_or(0.0) * scale).clamp(0.0, 255.0) as u8,
+                    (px.get(2).copied().unwrap_or(0.0) * scale).clamp(0.0, 255.0) as u8,
+                ]
+            })
+            .collect()
+    }
+}
+
+/// Ensure uint8 pixel data is exactly 3-channel RGB.
+///
+/// Strips alpha from RGBA and replicates grayscale to RGB.
+fn ensure_rgb_u8(data: &[u8], shape: &[u64]) -> Vec<u8> {
+    let channels = if shape.len() >= 4 {
+        if shape[1] <= 4 && shape[2] > 4 && shape[3] > 4 {
+            shape[1] as usize
+        } else {
+            *shape.last().unwrap() as usize
+        }
+    } else {
+        3
+    };
+
+    if channels == 3 {
+        return data.to_vec();
+    }
+
+    if channels == 4 {
+        return data
+            .chunks_exact(4)
+            .flat_map(|px| [px[0], px[1], px[2]])
+            .collect();
+    }
+
+    if channels == 1 {
+        return data.iter().flat_map(|&v| [v, v, v]).collect();
+    }
+
+    // Unknown: take first 3 or pad with zero.
+    data.chunks(channels)
+        .flat_map(|px| {
+            [
+                px.first().copied().unwrap_or(0),
+                px.get(1).copied().unwrap_or(0),
+                px.get(2).copied().unwrap_or(0),
+            ]
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------

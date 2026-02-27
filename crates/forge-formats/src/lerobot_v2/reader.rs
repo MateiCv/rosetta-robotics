@@ -6,6 +6,10 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Mutex;
+
+use bytes::Bytes;
+use rayon::prelude::*;
 
 use forge_core::{
     CameraInfo, DatasetInfo, Dtype, Episode, FieldSchema, ForgeError, ForgeResult, Frame,
@@ -16,6 +20,9 @@ use crate::lerobot_v3::parquet_io;
 use crate::traits::FormatReader;
 
 use super::info::{self, V2InfoJson};
+
+/// Per-video frame cache: frame_index → decoded RGB bytes.
+type VideoFrameCache = HashMap<usize, Bytes>;
 
 /// Stateless reader for LeRobot v2 datasets.
 ///
@@ -126,8 +133,6 @@ impl FormatReader for LeRobotV2Reader {
 
     fn read_episodes(&self, path: &Path) -> ForgeResult<ReadOutput<Vec<Episode>>> {
         let info = info::read_v2_info(path)?;
-        let mut episodes = Vec::with_capacity(info.total_episodes);
-        let mut warnings = Vec::new();
 
         // Collect video feature names and their camera info.
         let video_features: Vec<(String, u32, u32, u8)> = info
@@ -162,65 +167,74 @@ impl FormatReader for LeRobotV2Reader {
             .map(|(name, _)| name.to_string())
             .collect();
 
-        // Iterate over episodes. v2 has per-episode Parquet files.
-        for ep_idx in 0..info.total_episodes {
-            let chunk_idx = info.chunk_for_episode(ep_idx);
-            let data_path_rel = info.resolve_data_path(chunk_idx, ep_idx);
-            let data_path = path.join(&data_path_rel);
+        let warnings = Mutex::new(Vec::new());
 
-            if !data_path.exists() {
-                warnings.push(ReadWarning {
-                    episode_id: Some(ep_idx.to_string()),
-                    message: format!(
-                        "Parquet file not found: {}, skipping episode {}",
-                        data_path.display(),
-                        ep_idx
-                    ),
-                    severity: WarningSeverity::Error,
-                });
-                continue;
-            }
+        // Build all episodes in parallel using rayon.
+        // Each episode has its own Parquet file + own video files — zero contention.
+        let episode_results: Vec<Option<Episode>> = (0..info.total_episodes)
+            .into_par_iter()
+            .map(|ep_idx| {
+                let chunk_idx = info.chunk_for_episode(ep_idx);
+                let data_path_rel = info.resolve_data_path(chunk_idx, ep_idx);
+                let data_path = path.join(&data_path_rel);
 
-            // Read the per-episode Parquet file.
-            let batches = match parquet_io::read_parquet_file(&data_path) {
-                Ok(b) => b,
-                Err(e) => {
-                    warnings.push(ReadWarning {
+                if !data_path.exists() {
+                    warnings.lock().unwrap().push(ReadWarning {
                         episode_id: Some(ep_idx.to_string()),
                         message: format!(
-                            "Failed to read Parquet for episode {}: {}",
-                            ep_idx, e
+                            "Parquet file not found: {}, skipping episode {}",
+                            data_path.display(),
+                            ep_idx
                         ),
                         severity: WarningSeverity::Error,
                     });
-                    continue;
+                    return None;
                 }
-            };
 
-            match build_v2_episode(
-                path,
-                &info,
-                &batches,
-                ep_idx,
-                &video_features,
-                &data_feature_names,
-            ) {
-                Ok(episode) => episodes.push(episode),
-                Err(e) => {
-                    warnings.push(ReadWarning {
-                        episode_id: Some(ep_idx.to_string()),
-                        message: format!("Failed to build episode {}: {}", ep_idx, e),
-                        severity: WarningSeverity::Error,
-                    });
+                let batches = match parquet_io::read_parquet_file(&data_path) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        warnings.lock().unwrap().push(ReadWarning {
+                            episode_id: Some(ep_idx.to_string()),
+                            message: format!(
+                                "Failed to read Parquet for episode {}: {}",
+                                ep_idx, e
+                            ),
+                            severity: WarningSeverity::Error,
+                        });
+                        return None;
+                    }
+                };
+
+                match build_v2_episode(
+                    path,
+                    &info,
+                    &batches,
+                    ep_idx,
+                    &video_features,
+                    &data_feature_names,
+                ) {
+                    Ok(episode) => Some(episode),
+                    Err(e) => {
+                        warnings.lock().unwrap().push(ReadWarning {
+                            episode_id: Some(ep_idx.to_string()),
+                            message: format!("Failed to build episode {}: {}", ep_idx, e),
+                            severity: WarningSeverity::Error,
+                        });
+                        None
+                    }
                 }
-            }
-        }
+            })
+            .collect();
+
+        let episodes: Vec<Episode> = episode_results.into_iter().flatten().collect();
+        let warnings = warnings.into_inner().unwrap();
 
         Ok(ReadOutput::with_warnings(episodes, warnings))
     }
 }
 
-/// Build a single Episode from a per-episode Parquet file and lazy video frames.
+/// Build a single Episode from a per-episode Parquet file and batch-decoded video frames.
 fn build_v2_episode(
     dataset_path: &Path,
     info: &V2InfoJson,
@@ -369,6 +383,25 @@ fn build_v2_episode(
         );
     }
 
+    // Batch-decode all video frames upfront: one decoder open per video file,
+    // single pass through all frames. Eliminates O(N^2) per-frame decoder opens.
+    let mut video_caches: HashMap<String, VideoFrameCache> = HashMap::new();
+    for (video_key, _h, _w, _c) in video_features {
+        let video_rel = info.resolve_video_path(video_key, episode_index);
+        let video_path = dataset_path.join(&video_rel);
+
+        if video_path.exists() {
+            match batch_decode_video(&video_path) {
+                Ok(cache) => {
+                    video_caches.insert(video_key.clone(), cache);
+                }
+                Err(_) => {
+                    // Video file exists but failed to decode — frames will be missing.
+                }
+            }
+        }
+    }
+
     for frame_idx in 0..num_frames {
         let mut frame = Frame::new(all_frame_indices[frame_idx] as usize);
 
@@ -409,28 +442,23 @@ fn build_v2_episode(
             }
         }
 
-        // Set lazy video images (per-episode MP4 files in v2).
+        // Set eagerly-loaded video images from batch-decoded cache.
         for (video_key, height, width, channels) in video_features {
-            let video_rel = info.resolve_video_path(video_key, episode_index);
-            let video_path = dataset_path.join(&video_rel);
-
-            let h = *height;
-            let w = *width;
-            let c = *channels;
-            let vp = video_path.clone();
-            // In v2, each episode has its own MP4, so frame index is 0-based
-            // within the episode (same as frame_index column).
+            // In v2, each episode has its own MP4, so frame index is 0-based.
             let video_frame_index = all_frame_indices[frame_idx] as usize;
 
-            let image = LazyImage::new(
-                move || decode_video_frame(&vp, video_frame_index, w, h),
-                h,
-                w,
-                c,
-                ImageEncoding::Raw,
-            );
-
-            frame.images.insert(video_key.clone(), image);
+            if let Some(cache) = video_caches.get(video_key) {
+                if let Some(frame_data) = cache.get(&video_frame_index) {
+                    let image = LazyImage::from_bytes(
+                        frame_data.clone(),
+                        *height,
+                        *width,
+                        *channels,
+                        ImageEncoding::Raw,
+                    );
+                    frame.images.insert(video_key.clone(), image);
+                }
+            }
         }
 
         episode.frames.push(frame);
@@ -439,26 +467,21 @@ fn build_v2_episode(
     Ok(episode)
 }
 
-/// Decode a single video frame from an MP4 file at a specific frame index.
-fn decode_video_frame(
-    video_path: &Path,
-    frame_index: usize,
-    _width: u32,
-    _height: u32,
-) -> Result<bytes::Bytes, ForgeError> {
+/// Batch-decode all frames from a video file in a single pass.
+///
+/// Opens the decoder once and iterates through all frames, collecting them
+/// into a HashMap keyed by frame index. This eliminates the O(N^2) cost of
+/// opening a new decoder per frame.
+fn batch_decode_video(video_path: &Path) -> Result<VideoFrameCache, ForgeError> {
     let decoder = forge_video::VideoDecoder::open(video_path)?;
+    let mut cache = VideoFrameCache::new();
 
     for result in decoder {
         let frame = result?;
-        if frame.frame_index == frame_index {
-            return Ok(frame.data);
-        }
+        cache.insert(frame.frame_index, frame.data);
     }
 
-    Err(ForgeError::Video(format!(
-        "frame {frame_index} not found in {}",
-        video_path.display()
-    )))
+    Ok(cache)
 }
 
 /// Map a LeRobot dtype string to Forge's Dtype enum.
