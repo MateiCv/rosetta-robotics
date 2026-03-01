@@ -1492,6 +1492,7 @@ dependencies = [
  "forge-core",
  "forge-video",
  "hdf5",
+ "image",
  "mcap",
  "ndarray",
  "parquet",

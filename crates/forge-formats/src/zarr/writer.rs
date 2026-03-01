@@ -11,7 +11,7 @@ use std::num::NonZeroU64;
 use std::path::Path;
 use std::sync::Arc;
 
-use forge_core::{DatasetInfo, Episode, ForgeError, ForgeResult, ImageEncoding};
+use forge_core::{DatasetInfo, Episode, ForgeError, ForgeResult};
 use zarrs::array::{Array, ArrayMetadataV2, FillValueMetadataV2};
 use zarrs::array_subset::ArraySubset;
 use zarrs::filesystem::FilesystemStore;
@@ -43,8 +43,12 @@ pub struct ZarrWriter {
     state_buffer: Vec<f32>,
     /// Buffered image data per camera (flat u8).
     image_buffers: Vec<(String, Vec<u8>)>,
+    /// Extra numeric arrays from zarr_extra metadata (name -> (dim, buffer)).
+    extra_buffers: Vec<(String, usize, Vec<f32>)>,
     /// Total frames accumulated.
     total_frames: usize,
+    /// FPS from source dataset.
+    fps: Option<f64>,
 }
 
 impl ZarrWriter {
@@ -60,7 +64,9 @@ impl ZarrWriter {
             action_buffer: Vec::new(),
             state_buffer: Vec::new(),
             image_buffers: Vec::new(),
+            extra_buffers: Vec::new(),
             total_frames: 0,
+            fps: None,
         }
     }
 }
@@ -116,13 +122,17 @@ impl FormatWriter for ZarrWriter {
             self.cameras = cam_list;
         }
 
-        // Buffer action data.
+        // Buffer action data (pad/truncate each frame to action_dim).
         if let Some(action_dim) = self.action_dim {
             for frame in &episode.frames {
                 if let Some(ref action) = frame.action {
                     let vals = action.load()?;
-                    self.action_buffer
-                        .extend(vals.iter().map(|&v| v as f32));
+                    self.action_buffer.extend(
+                        vals.iter()
+                            .map(|&v| v as f32)
+                            .chain(std::iter::repeat(0.0f32))
+                            .take(action_dim),
+                    );
                 } else {
                     self.action_buffer
                         .extend(std::iter::repeat_n(0.0f32, action_dim));
@@ -130,13 +140,17 @@ impl FormatWriter for ZarrWriter {
             }
         }
 
-        // Buffer state data.
+        // Buffer state data (pad/truncate each frame to state_dim).
         if let Some(state_dim) = self.state_dim {
             for frame in &episode.frames {
                 if let Some(ref state) = frame.state {
                     let vals = state.load()?;
-                    self.state_buffer
-                        .extend(vals.iter().map(|&v| v as f32));
+                    self.state_buffer.extend(
+                        vals.iter()
+                            .map(|&v| v as f32)
+                            .chain(std::iter::repeat(0.0f32))
+                            .take(state_dim),
+                    );
                 } else {
                     self.state_buffer
                         .extend(std::iter::repeat_n(0.0f32, state_dim));
@@ -164,6 +178,36 @@ impl FormatWriter for ZarrWriter {
                     self.image_buffers[cam_idx]
                         .1
                         .extend(std::iter::repeat_n(0u8, pixels_per_frame));
+                }
+            }
+        }
+
+        // Buffer extra numeric arrays from zarr_extra:* metadata.
+        for frame in &episode.frames {
+            for (key, value) in &frame.metadata {
+                if let Some(array_name) = key.strip_prefix("zarr_extra:") {
+                    if let Some(data_arr) = value.get("data").and_then(|d| d.as_array()) {
+                        let floats: Vec<f32> = data_arr
+                            .iter()
+                            .filter_map(|v| v.as_f64().map(|f| f as f32))
+                            .collect();
+                        let dim = floats.len();
+                        if dim == 0 {
+                            continue;
+                        }
+
+                        // Find or create the buffer for this array name.
+                        let buf_idx = self
+                            .extra_buffers
+                            .iter()
+                            .position(|(name, _, _)| name == array_name);
+                        if let Some(idx) = buf_idx {
+                            self.extra_buffers[idx].2.extend_from_slice(&floats);
+                        } else {
+                            self.extra_buffers
+                                .push((array_name.to_string(), dim, floats));
+                        }
+                    }
                 }
             }
         }
@@ -252,6 +296,28 @@ impl FormatWriter for ZarrWriter {
             }
         }
 
+        // Write extra numeric arrays from zarr_extra metadata.
+        for (name, dim, buffer) in &self.extra_buffers {
+            let array_path = format!("/data/{name}");
+            write_zarr_v2_array(
+                &store,
+                output_path,
+                &array_path,
+                &[total_frames, *dim as u64],
+                "<f4",
+                FillValueMetadataV2::Number(serde_json::Number::from_f64(0.0).unwrap()),
+                buffer,
+            )?;
+        }
+
+        // Write root .zattrs with FPS if available.
+        if let Some(fps) = self.fps {
+            let zattrs = serde_json::json!({ "fps": fps });
+            let zattrs_path = output_path.join(".zattrs");
+            std::fs::write(zattrs_path, serde_json::to_string_pretty(&zattrs).unwrap())
+                .map_err(ForgeError::Io)?;
+        }
+
         // Write meta/episode_ends array.
         write_zarr_v2_array_i64(
             &store,
@@ -267,6 +333,10 @@ impl FormatWriter for ZarrWriter {
 
     fn set_deterministic(&mut self, deterministic: bool) {
         self.deterministic = deterministic;
+    }
+
+    fn set_fps(&mut self, fps: f64) {
+        self.fps = Some(fps);
     }
 }
 
@@ -291,17 +361,53 @@ fn blosc_compressor_json() -> serde_json::Value {
     })
 }
 
-/// Write a float32 Zarr v2 array with Blosc compression.
-fn write_zarr_v2_array(
+/// Compute a chunk shape that keeps each chunk under ~64MB.
+///
+/// Chunks along the first axis (frames), keeping all other dimensions intact.
+/// `bytes_per_element` is the size of each array element (1 for u8, 4 for f32, 8 for i64).
+fn compute_chunk_shape(shape: &[u64], bytes_per_element: u64) -> Vec<NonZeroU64> {
+    const MAX_CHUNK_BYTES: u64 = 64 * 1024 * 1024; // 64 MB
+
+    if shape.is_empty() || shape[0] == 0 {
+        // Empty array — return chunk shape with all dims at least 1.
+        return shape
+            .iter()
+            .map(|&d| NonZeroU64::new(d.max(1)).unwrap())
+            .collect();
+    }
+
+    // Bytes per frame = product of all dimensions except the first, times element size.
+    let bytes_per_frame: u64 = shape[1..]
+        .iter()
+        .copied()
+        .product::<u64>()
+        .max(1)
+        * bytes_per_element;
+
+    let frames_per_chunk = if bytes_per_frame > MAX_CHUNK_BYTES {
+        // Single frame exceeds target — use 1 frame per chunk.
+        1
+    } else {
+        (MAX_CHUNK_BYTES / bytes_per_frame).max(1).min(shape[0])
+    };
+
+    let mut chunk_shape: Vec<NonZeroU64> = shape
+        .iter()
+        .map(|&d| NonZeroU64::new(d.max(1)).unwrap())
+        .collect();
+    chunk_shape[0] = NonZeroU64::new(frames_per_chunk.max(1)).unwrap();
+    chunk_shape
+}
+
+/// Create a Zarr v2 array with metadata and return it plus the chunk frame count.
+fn create_zarr_v2_array(
     store: &Arc<FilesystemStore>,
-    _output_path: &Path,
     array_path: &str,
     shape: &[u64],
     dtype_str: &str,
     fill_value: FillValueMetadataV2,
-    data: &[f32],
-) -> ForgeResult<()> {
-    // Construct V2 metadata.
+    bytes_per_element: u64,
+) -> ForgeResult<(Array<FilesystemStore>, u64)> {
     let compressor: zarrs::metadata::v2::MetadataV2 =
         serde_json::from_value(blosc_compressor_json()).map_err(|e| ForgeError::Conversion {
             source_format: "episode".into(),
@@ -309,11 +415,11 @@ fn write_zarr_v2_array(
             reason: format!("failed to create Blosc compressor metadata: {e}"),
         })?;
 
-    // Chunk shape: entire array in one chunk for simplicity.
-    let chunk_shape: Vec<NonZeroU64> = shape
-        .iter()
-        .map(|&d| NonZeroU64::new(d.max(1)).unwrap())
-        .collect();
+    let chunk_shape = compute_chunk_shape(shape, bytes_per_element);
+    let chunk_frames = chunk_shape
+        .first()
+        .map(|n| n.get())
+        .unwrap_or(shape.first().copied().unwrap_or(1));
 
     let metadata = ArrayMetadataV2::new(
         shape.to_vec(),
@@ -333,29 +439,76 @@ fn write_zarr_v2_array(
             }
         })?;
 
-    // Store metadata (writes .zarray file).
     array.store_metadata().map_err(|e| ForgeError::Conversion {
         source_format: "episode".into(),
         target_format: "zarr".into(),
         reason: format!("failed to store metadata for {array_path}: {e}"),
     })?;
 
-    // Write data.
-    if !data.is_empty() {
-        let subset = ArraySubset::new_with_shape(shape.to_vec());
-        array
-            .store_array_subset_elements::<f32>(&subset, data)
-            .map_err(|e| ForgeError::Conversion {
-                source_format: "episode".into(),
-                target_format: "zarr".into(),
-                reason: format!("failed to write data for {array_path}: {e}"),
-            })?;
+    Ok((array, chunk_frames))
+}
+
+/// Write a float32 Zarr v2 array with Blosc compression.
+///
+/// Writes data in chunk-sized slices along the first axis to avoid
+/// passing the entire buffer to blosc at once.
+fn write_zarr_v2_array(
+    store: &Arc<FilesystemStore>,
+    _output_path: &Path,
+    array_path: &str,
+    shape: &[u64],
+    dtype_str: &str,
+    fill_value: FillValueMetadataV2,
+    data: &[f32],
+) -> ForgeResult<()> {
+    let (array, chunk_frames) =
+        create_zarr_v2_array(store, array_path, shape, dtype_str, fill_value, 4)?;
+
+    if !data.is_empty() && !shape.is_empty() {
+        let total_frames = shape[0];
+        let elements_per_frame: u64 = shape[1..].iter().product::<u64>().max(1);
+
+        let mut offset = 0u64;
+        while offset < total_frames {
+            let end = (offset + chunk_frames).min(total_frames);
+            let count = end - offset;
+            let start_elem = (offset * elements_per_frame) as usize;
+            let end_elem = (end * elements_per_frame) as usize;
+            let slice = &data[start_elem..end_elem];
+
+            let mut subset_shape = shape.to_vec();
+            subset_shape[0] = count;
+            let start_vec: Vec<u64> = std::iter::once(offset)
+                .chain(std::iter::repeat(0).take(shape.len() - 1))
+                .collect();
+            let subset = ArraySubset::new_with_start_shape(start_vec, subset_shape)
+                .map_err(|e| ForgeError::Conversion {
+                    source_format: "episode".into(),
+                    target_format: "zarr".into(),
+                    reason: format!("failed to create subset for {array_path}: {e}"),
+                })?;
+
+            array
+                .store_array_subset_elements::<f32>(&subset, slice)
+                .map_err(|e| ForgeError::Conversion {
+                    source_format: "episode".into(),
+                    target_format: "zarr".into(),
+                    reason: format!("failed to write data for {array_path}: {e}"),
+                })?;
+
+            offset = end;
+        }
     }
 
     Ok(())
 }
 
 /// Write a uint8 Zarr v2 array with Blosc compression.
+///
+/// Writes data in chunk-sized slices along the first axis to keep individual
+/// blosc compression calls small enough (target ~64MB per chunk). This avoids
+/// the out-of-memory failure that occurs when compressing entire image arrays
+/// (e.g., 20000 frames x 480 x 640 x 3 = 18GB) in a single call.
 fn write_zarr_v2_array_u8(
     store: &Arc<FilesystemStore>,
     _output_path: &Path,
@@ -364,51 +517,44 @@ fn write_zarr_v2_array_u8(
     dtype_str: &str,
     data: &[u8],
 ) -> ForgeResult<()> {
-    let compressor: zarrs::metadata::v2::MetadataV2 =
-        serde_json::from_value(blosc_compressor_json()).map_err(|e| ForgeError::Conversion {
-            source_format: "episode".into(),
-            target_format: "zarr".into(),
-            reason: format!("failed to create Blosc compressor metadata: {e}"),
-        })?;
+    let fill_value = FillValueMetadataV2::Number(serde_json::Number::from(0));
+    let (array, chunk_frames) =
+        create_zarr_v2_array(store, array_path, shape, dtype_str, fill_value, 1)?;
 
-    let chunk_shape: Vec<NonZeroU64> = shape
-        .iter()
-        .map(|&d| NonZeroU64::new(d.max(1)).unwrap())
-        .collect();
+    if !data.is_empty() && !shape.is_empty() {
+        let total_frames = shape[0];
+        let elements_per_frame: u64 = shape[1..].iter().product::<u64>().max(1);
 
-    let metadata = ArrayMetadataV2::new(
-        shape.to_vec(),
-        chunk_shape.into(),
-        DataTypeMetadataV2::Simple(dtype_str.to_string()),
-        FillValueMetadataV2::Number(serde_json::Number::from(0)),
-        Some(compressor),
-        None,
-    );
+        let mut offset = 0u64;
+        while offset < total_frames {
+            let end = (offset + chunk_frames).min(total_frames);
+            let count = end - offset;
+            let start_elem = (offset * elements_per_frame) as usize;
+            let end_elem = (end * elements_per_frame) as usize;
+            let slice = &data[start_elem..end_elem];
 
-    let array =
-        Array::new_with_metadata(store.clone(), array_path, metadata.into()).map_err(|e| {
-            ForgeError::Conversion {
-                source_format: "episode".into(),
-                target_format: "zarr".into(),
-                reason: format!("failed to create Zarr array at {array_path}: {e}"),
-            }
-        })?;
+            let mut subset_shape = shape.to_vec();
+            subset_shape[0] = count;
+            let start_vec: Vec<u64> = std::iter::once(offset)
+                .chain(std::iter::repeat(0).take(shape.len() - 1))
+                .collect();
+            let subset = ArraySubset::new_with_start_shape(start_vec, subset_shape)
+                .map_err(|e| ForgeError::Conversion {
+                    source_format: "episode".into(),
+                    target_format: "zarr".into(),
+                    reason: format!("failed to create subset for {array_path}: {e}"),
+                })?;
 
-    array.store_metadata().map_err(|e| ForgeError::Conversion {
-        source_format: "episode".into(),
-        target_format: "zarr".into(),
-        reason: format!("failed to store metadata for {array_path}: {e}"),
-    })?;
+            array
+                .store_array_subset_elements::<u8>(&subset, slice)
+                .map_err(|e| ForgeError::Conversion {
+                    source_format: "episode".into(),
+                    target_format: "zarr".into(),
+                    reason: format!("failed to write data for {array_path}: {e}"),
+                })?;
 
-    if !data.is_empty() {
-        let subset = ArraySubset::new_with_shape(shape.to_vec());
-        array
-            .store_array_subset_elements::<u8>(&subset, data)
-            .map_err(|e| ForgeError::Conversion {
-                source_format: "episode".into(),
-                target_format: "zarr".into(),
-                reason: format!("failed to write data for {array_path}: {e}"),
-            })?;
+            offset = end;
+        }
     }
 
     Ok(())
@@ -423,51 +569,44 @@ fn write_zarr_v2_array_i64(
     dtype_str: &str,
     data: &[i64],
 ) -> ForgeResult<()> {
-    let compressor: zarrs::metadata::v2::MetadataV2 =
-        serde_json::from_value(blosc_compressor_json()).map_err(|e| ForgeError::Conversion {
-            source_format: "episode".into(),
-            target_format: "zarr".into(),
-            reason: format!("failed to create Blosc compressor metadata: {e}"),
-        })?;
+    let fill_value = FillValueMetadataV2::Number(serde_json::Number::from(0));
+    let (array, chunk_frames) =
+        create_zarr_v2_array(store, array_path, shape, dtype_str, fill_value, 8)?;
 
-    let chunk_shape: Vec<NonZeroU64> = shape
-        .iter()
-        .map(|&d| NonZeroU64::new(d.max(1)).unwrap())
-        .collect();
+    if !data.is_empty() && !shape.is_empty() {
+        let total_frames = shape[0];
+        let elements_per_frame: u64 = shape[1..].iter().product::<u64>().max(1);
 
-    let metadata = ArrayMetadataV2::new(
-        shape.to_vec(),
-        chunk_shape.into(),
-        DataTypeMetadataV2::Simple(dtype_str.to_string()),
-        FillValueMetadataV2::Number(serde_json::Number::from(0)),
-        Some(compressor),
-        None,
-    );
+        let mut offset = 0u64;
+        while offset < total_frames {
+            let end = (offset + chunk_frames).min(total_frames);
+            let count = end - offset;
+            let start_elem = (offset * elements_per_frame) as usize;
+            let end_elem = (end * elements_per_frame) as usize;
+            let slice = &data[start_elem..end_elem];
 
-    let array =
-        Array::new_with_metadata(store.clone(), array_path, metadata.into()).map_err(|e| {
-            ForgeError::Conversion {
-                source_format: "episode".into(),
-                target_format: "zarr".into(),
-                reason: format!("failed to create Zarr array at {array_path}: {e}"),
-            }
-        })?;
+            let mut subset_shape = shape.to_vec();
+            subset_shape[0] = count;
+            let start_vec: Vec<u64> = std::iter::once(offset)
+                .chain(std::iter::repeat(0).take(shape.len() - 1))
+                .collect();
+            let subset = ArraySubset::new_with_start_shape(start_vec, subset_shape)
+                .map_err(|e| ForgeError::Conversion {
+                    source_format: "episode".into(),
+                    target_format: "zarr".into(),
+                    reason: format!("failed to create subset for {array_path}: {e}"),
+                })?;
 
-    array.store_metadata().map_err(|e| ForgeError::Conversion {
-        source_format: "episode".into(),
-        target_format: "zarr".into(),
-        reason: format!("failed to store metadata for {array_path}: {e}"),
-    })?;
+            array
+                .store_array_subset_elements::<i64>(&subset, slice)
+                .map_err(|e| ForgeError::Conversion {
+                    source_format: "episode".into(),
+                    target_format: "zarr".into(),
+                    reason: format!("failed to write data for {array_path}: {e}"),
+                })?;
 
-    if !data.is_empty() {
-        let subset = ArraySubset::new_with_shape(shape.to_vec());
-        array
-            .store_array_subset_elements::<i64>(&subset, data)
-            .map_err(|e| ForgeError::Conversion {
-                source_format: "episode".into(),
-                target_format: "zarr".into(),
-                reason: format!("failed to write data for {array_path}: {e}"),
-            })?;
+            offset = end;
+        }
     }
 
     Ok(())
@@ -475,14 +614,7 @@ fn write_zarr_v2_array_i64(
 
 /// Decode an image to raw RGB bytes if it's encoded (JPEG/PNG).
 fn decode_image_to_raw(image: &forge_core::LazyImage) -> ForgeResult<Vec<u8>> {
-    let data = image.load()?;
-    match image.encoding {
-        ImageEncoding::Raw => Ok(data.to_vec()),
-        ImageEncoding::Jpeg | ImageEncoding::Png | ImageEncoding::CompressedBytes => {
-            // Store as-is -- in practice, robotics Zarr datasets store raw uint8.
-            Ok(data.to_vec())
-        }
-    }
+    crate::decode_image_to_rgb(image)
 }
 
 #[cfg(test)]

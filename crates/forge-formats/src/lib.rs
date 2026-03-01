@@ -37,6 +37,31 @@ pub use detection::{detect_format_scored, DetectionResult, FormatDetector};
 pub use registry::{all_formats, detect_format, get_reader, get_writer, FormatCapability};
 pub use traits::{FormatReader, FormatWriter};
 
+/// Decode a LazyImage to raw RGB bytes, handling JPEG/PNG decoding.
+///
+/// This is used by writers that need raw pixel data (video encoders, HDF5, Zarr).
+/// For Raw encoding, returns the data as-is. For JPEG/PNG/CompressedBytes,
+/// uses the `image` crate to decode to RGB8.
+pub fn decode_image_to_rgb(img: &forge_core::LazyImage) -> forge_core::ForgeResult<Vec<u8>> {
+    let data = img.load()?;
+    match img.encoding {
+        forge_core::ImageEncoding::Raw => Ok(data.to_vec()),
+        forge_core::ImageEncoding::Jpeg | forge_core::ImageEncoding::Png => {
+            let decoded = image::load_from_memory(&data).map_err(|e| {
+                forge_core::ForgeError::Video(format!("failed to decode image: {e}"))
+            })?;
+            Ok(decoded.to_rgb8().into_raw())
+        }
+        forge_core::ImageEncoding::CompressedBytes => {
+            // Try decoding as a known image format. If that fails, treat as raw pixels.
+            match image::load_from_memory(&data) {
+                Ok(decoded) => Ok(decoded.to_rgb8().into_raw()),
+                Err(_) => Ok(data.to_vec()),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests;
 

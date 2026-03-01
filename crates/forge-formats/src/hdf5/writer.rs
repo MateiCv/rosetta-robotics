@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use forge_core::{DatasetInfo, Episode, ForgeError, ForgeResult, ImageEncoding};
+use forge_core::{DatasetInfo, Episode, ForgeError, ForgeResult};
 
 use crate::traits::FormatWriter;
 use super::layout::HDF5Layout;
@@ -24,6 +24,8 @@ pub struct HDF5Writer {
     episodes_written: Vec<(usize, usize)>,
     /// Whether to produce deterministic output.
     deterministic: bool,
+    /// Frames per second (stored as HDF5 attribute).
+    fps: Option<f64>,
 }
 
 impl HDF5Writer {
@@ -33,6 +35,7 @@ impl HDF5Writer {
             layout: HDF5Layout::Aloha,
             episodes_written: Vec::new(),
             deterministic: false,
+            fps: None,
         }
     }
 
@@ -42,6 +45,7 @@ impl HDF5Writer {
             layout,
             episodes_written: Vec::new(),
             deterministic: false,
+            fps: None,
         }
     }
 
@@ -66,6 +70,9 @@ impl HDF5Writer {
         // Write metadata attributes on root group.
         write_attr_i64(&file, "episode_index", episode_index as i64)?;
         write_attr_i64(&file, "frame_count", episode.frames.len() as i64)?;
+        if let Some(fps) = self.fps {
+            write_attr_f64(&file, "fps", fps)?;
+        }
 
         Ok(())
     }
@@ -138,9 +145,9 @@ impl HDF5Writer {
             for frame in &episode.frames {
                 if let Some(ref a) = frame.action {
                     let vals = a.load()?;
-                    action_data.extend(vals.iter().map(|&v| v as f32));
+                    action_data.extend_from_slice(&vals);
                 } else {
-                    action_data.extend(std::iter::repeat_n(0.0f32, action_dim));
+                    action_data.extend(std::iter::repeat_n(0.0f64, action_dim));
                 }
             }
 
@@ -180,9 +187,9 @@ impl HDF5Writer {
             for frame in &episode.frames {
                 if let Some(ref s) = frame.state {
                     let vals = s.load()?;
-                    state_data.extend(vals.iter().map(|&v| v as f32));
+                    state_data.extend_from_slice(&vals);
                 } else {
-                    state_data.extend(std::iter::repeat_n(0.0f32, state_dim));
+                    state_data.extend(std::iter::repeat_n(0.0f64, state_dim));
                 }
             }
 
@@ -296,9 +303,9 @@ impl HDF5Writer {
             for frame in &episode.frames {
                 if let Some(ref a) = frame.action {
                     let vals = a.load()?;
-                    action_data.extend(vals.iter().map(|&v| v as f32));
+                    action_data.extend_from_slice(&vals);
                 } else {
-                    action_data.extend(std::iter::repeat_n(0.0f32, action_dim));
+                    action_data.extend(std::iter::repeat_n(0.0f64, action_dim));
                 }
             }
 
@@ -340,9 +347,9 @@ impl HDF5Writer {
             for frame in &episode.frames {
                 if let Some(ref s) = frame.state {
                     let vals = s.load()?;
-                    state_data.extend(vals.iter().map(|&v| v as f32));
+                    state_data.extend_from_slice(&vals);
                 } else {
-                    state_data.extend(std::iter::repeat_n(0.0f32, state_dim));
+                    state_data.extend(std::iter::repeat_n(0.0f64, state_dim));
                 }
             }
 
@@ -490,6 +497,9 @@ impl FormatWriter for HDF5Writer {
                     if let Some(ref robot_type) = dataset_info.robot_type {
                         write_attr_str(&file, "robot_type", robot_type)?;
                     }
+                    if let Some(fps) = self.fps {
+                        write_attr_f64(&file, "fps", fps)?;
+                    }
                 }
             }
             HDF5Layout::Aloha => {
@@ -503,6 +513,10 @@ impl FormatWriter for HDF5Writer {
     fn set_deterministic(&mut self, deterministic: bool) {
         self.deterministic = deterministic;
     }
+
+    fn set_fps(&mut self, fps: f64) {
+        self.fps = Some(fps);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -513,23 +527,26 @@ impl FormatWriter for HDF5Writer {
 fn decode_image_to_raw(
     image: &forge_core::LazyImage,
 ) -> ForgeResult<Vec<u8>> {
-    let data = image.load()?;
-    match image.encoding {
-        ImageEncoding::Raw => Ok(data.to_vec()),
-        ImageEncoding::Jpeg | ImageEncoding::Png | ImageEncoding::CompressedBytes => {
-            // For HDF5, images must be raw uint8. If encoded, we store as-is
-            // since decoding JPEG/PNG requires an image decoder crate which is
-            // not in scope. In practice, most robotics HDF5 datasets store raw
-            // uint8 images, and our test data uses raw encoding.
-            Ok(data.to_vec())
-        }
-    }
+    crate::decode_image_to_rgb(image)
 }
 
 /// Write an i64 attribute on an HDF5 location.
 fn write_attr_i64(location: &hdf5::File, name: &str, value: i64) -> ForgeResult<()> {
     location
         .new_attr::<i64>()
+        .create(name)
+        .and_then(|attr| attr.write_scalar(&value))
+        .map_err(|e| ForgeError::Conversion {
+            source_format: "episode".into(),
+            target_format: "hdf5".into(),
+            reason: format!("failed to write attribute '{name}': {e}"),
+        })
+}
+
+/// Write a float64 attribute on an HDF5 location.
+fn write_attr_f64(location: &hdf5::File, name: &str, value: f64) -> ForgeResult<()> {
+    location
+        .new_attr::<f64>()
         .create(name)
         .and_then(|attr| attr.write_scalar(&value))
         .map_err(|e| ForgeError::Conversion {
@@ -563,7 +580,7 @@ fn write_attr_str(location: &hdf5::File, name: &str, value: &str) -> ForgeResult
 mod tests {
     use super::*;
     use bytes::Bytes;
-    use forge_core::{CameraInfo, Dtype, Frame, LazyArray, LazyImage};
+    use forge_core::{CameraInfo, Dtype, Frame, ImageEncoding, LazyArray, LazyImage};
     use std::collections::HashMap;
     use tempfile::TempDir;
 
@@ -655,14 +672,14 @@ mod tests {
         let img_shape = img_ds.shape();
         assert_eq!(img_shape, vec![5, 4, 4, 3], "image shape mismatch");
 
-        // Verify action data values match within f32 precision.
-        let action_data: Vec<f32> = action_ds.read_raw().unwrap();
+        // Verify action data values match.
+        let action_data: Vec<f64> = action_ds.read_raw().unwrap();
         assert_eq!(action_data.len(), 20); // 5 frames * 4 dims
         // First frame: [0.0, 0.1, 0.2, 0.3]
-        assert!((action_data[0] - 0.0).abs() < 1e-5);
-        assert!((action_data[1] - 0.1).abs() < 1e-5);
-        assert!((action_data[2] - 0.2).abs() < 1e-5);
-        assert!((action_data[3] - 0.3).abs() < 1e-5);
+        assert!((action_data[0] - 0.0).abs() < 1e-10);
+        assert!((action_data[1] - 0.1).abs() < 1e-10);
+        assert!((action_data[2] - 0.2).abs() < 1e-10);
+        assert!((action_data[3] - 0.3).abs() < 1e-10);
 
         // Verify image data values.
         let img_data: Vec<u8> = img_ds.read_raw().unwrap();

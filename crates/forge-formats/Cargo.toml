@@ -8,9 +8,9 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["zarr-format", "rlds-format", "rosbag-format", "robodm-format"]
-# Note: hdf5-format requires libHDF5 system library. Enable explicitly:
-#   cargo build --features hdf5-format
+default = ["hdf5-format", "zarr-format", "rlds-format", "rosbag-format", "robodm-format"]
+# Note: hdf5-format requires libHDF5 system library. Disable with:
+#   cargo build --no-default-features --features zarr-format,rlds-format,rosbag-format,robodm-format
 hdf5-format = ["dep:hdf5", "dep:ndarray"]
 zarr-format = ["dep:zarrs"]
 rlds-format = ["dep:tfrecord", "dep:prost", "dep:crc32c", "dep:flate2"]
@@ -26,6 +26,7 @@ serde.workspace = true
 serde_json.workspace = true
 arrow.workspace = true
 parquet.workspace = true
+image.workspace = true
 # Phase 5: Optional format-specific dependencies
 hdf5 = { workspace = true, optional = true }
 ndarray = { workspace = true, optional = true }

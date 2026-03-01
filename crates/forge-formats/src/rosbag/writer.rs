@@ -214,6 +214,8 @@ pub struct RosbagWriter {
     episodes_written: Vec<usize>,
     /// Whether deterministic mode is enabled.
     deterministic: bool,
+    /// Frames per second for timestamp synthesis.
+    fps: f64,
 }
 
 impl Default for RosbagWriter {
@@ -228,6 +230,7 @@ impl RosbagWriter {
         Self {
             episodes_written: Vec::new(),
             deterministic: false,
+            fps: 30.0,
         }
     }
 }
@@ -369,12 +372,13 @@ impl FormatWriter for RosbagWriter {
         let mut sequence = 0u32;
 
         for (frame_index, frame) in episode.frames.iter().enumerate() {
-            // Extract timestamp from metadata, or synthesize at 30fps.
+            // Extract timestamp from metadata, or synthesize from FPS.
+            let ns_per_frame = (1_000_000_000.0 / self.fps) as u64;
             let timestamp_ns: u64 = frame
                 .metadata
                 .get("timestamp_ns")
                 .and_then(|v| v.as_u64())
-                .unwrap_or_else(|| (frame_index as u64) * 33_333_333);
+                .unwrap_or_else(|| (frame_index as u64) * ns_per_frame);
 
             // Write image messages.
             for key in &camera_keys {
@@ -510,6 +514,10 @@ impl FormatWriter for RosbagWriter {
 
     fn set_deterministic(&mut self, deterministic: bool) {
         self.deterministic = deterministic;
+    }
+
+    fn set_fps(&mut self, fps: f64) {
+        self.fps = fps;
     }
 }
 

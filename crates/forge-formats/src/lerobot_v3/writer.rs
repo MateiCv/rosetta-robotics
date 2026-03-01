@@ -242,8 +242,8 @@ impl LeRobotV3Writer {
 
             for frame in &episode.frames {
                 if let Some(image) = frame.images.get(camera_key) {
-                    let data = image.load()?;
-                    encoder.encode_frame(data)?;
+                    let data = crate::decode_image_to_rgb(image)?;
+                    encoder.encode_frame(&data)?;
                 }
             }
 
@@ -573,8 +573,22 @@ impl FormatWriter for LeRobotV3Writer {
         Ok(())
     }
 
+    fn set_fps(&mut self, fps: f64) {
+        self.fps = fps.round() as u32;
+    }
+
+    fn set_robot_type(&mut self, robot_type: &str) {
+        self.robot_type = robot_type.to_string();
+    }
+
     fn set_deterministic(&mut self, deterministic: bool) {
         self.deterministic = deterministic;
+    }
+
+    fn set_chunks_size(&mut self, chunks_size: usize) {
+        if chunks_size > 0 {
+            self.chunks_size = chunks_size;
+        }
     }
 
     fn finalize(&mut self, output_path: &Path, _dataset_info: &DatasetInfo) -> ForgeResult<()> {

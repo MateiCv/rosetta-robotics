@@ -136,6 +136,19 @@ impl Converter {
         // 5. Inspect source.
         let dataset_info = reader.inspect(source_path)?;
 
+        // 5b. Propagate source metadata (FPS, robot type, chunks_size) to the
+        //     writer so round-trip conversions preserve these values instead of
+        //     using hardcoded defaults.
+        if let Some(fps) = dataset_info.fps {
+            writer.set_fps(fps);
+        }
+        if let Some(ref robot_type) = dataset_info.robot_type {
+            writer.set_robot_type(robot_type);
+        }
+        if let Some(chunks_size) = dataset_info.metadata.get("chunks_size").and_then(|v| v.as_u64()) {
+            writer.set_chunks_size(chunks_size as usize);
+        }
+
         // 6. Read all episodes eagerly.
         //    ReadOutput bundles episodes with any warnings from lenient reading.
         //    After parallel processing, the write phase feeds successfully

@@ -64,6 +64,24 @@ pub trait FormatWriter: Send + Sync {
     /// by the output format (e.g., `info.json`, `meta/info.json`).
     fn finalize(&mut self, output_path: &Path, dataset_info: &DatasetInfo) -> ForgeResult<()>;
 
+    /// Set the FPS (frames per second) for the output dataset.
+    ///
+    /// Called by the conversion pipeline to propagate the source dataset's FPS
+    /// to the writer. Default implementation is a no-op for formats that do not
+    /// store FPS metadata.
+    fn set_fps(&mut self, _fps: f64) {
+        // Default: no-op. Formats that store FPS override this.
+    }
+
+    /// Set the robot type for the output dataset.
+    ///
+    /// Called by the conversion pipeline to propagate the source dataset's
+    /// robot type to the writer. Default implementation is a no-op for formats
+    /// that do not store robot type metadata.
+    fn set_robot_type(&mut self, _robot_type: &str) {
+        // Default: no-op. Formats that store robot type override this.
+    }
+
     /// Enable deterministic mode for bit-identical output.
     ///
     /// When enabled, writers should use single-threaded encoding and sort
@@ -71,5 +89,14 @@ pub trait FormatWriter: Send + Sync {
     /// no-op for formats that do not support deterministic output.
     fn set_deterministic(&mut self, _deterministic: bool) {
         // Default: no-op. Formats that support deterministic mode override this.
+    }
+
+    /// Set the chunk size (episodes per chunk) for the output dataset.
+    ///
+    /// Called by the conversion pipeline to propagate the source dataset's
+    /// chunk size. Default implementation is a no-op for formats that do not
+    /// use chunked file layouts.
+    fn set_chunks_size(&mut self, _chunks_size: usize) {
+        // Default: no-op. Formats that use chunks override this.
     }
 }

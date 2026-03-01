@@ -268,15 +268,27 @@ fn try_parse_dataset_info_json(path: &Path) -> Option<DatasetInfo> {
         .unwrap_or("unknown")
         .to_string();
 
+    // Parse splits: handle both array format (TFDS) and object format (our writer).
     let total_episodes = parsed
         .get("splits")
-        .and_then(|s| s.as_array())
-        .and_then(|arr| {
-            arr.iter()
-                .find(|s| s.get("name").and_then(|n| n.as_str()) == Some("train"))
+        .and_then(|s| {
+            // Try array format first (standard TFDS).
+            if let Some(arr) = s.as_array() {
+                arr.iter()
+                    .find(|item| item.get("name").and_then(|n| n.as_str()) == Some("train"))
+                    .and_then(|item| item.get("numShards").and_then(|n| n.as_u64()))
+            } else if let Some(obj) = s.as_object() {
+                // Object format: { "train": { "numShards": N } }
+                obj.get("train")
+                    .and_then(|t| t.get("numShards").and_then(|n| n.as_u64()))
+            } else {
+                None
+            }
         })
-        .and_then(|s| s.get("numShards").and_then(|n| n.as_u64()))
         .unwrap_or(0) as usize;
+
+    // Extract FPS if present.
+    let fps = parsed.get("fps").and_then(|v| v.as_f64());
 
     // Extract feature descriptions from the schema.
     let mut fields = Vec::new();
@@ -300,7 +312,7 @@ fn try_parse_dataset_info_json(path: &Path) -> Option<DatasetInfo> {
         path: path.to_path_buf(),
         total_episodes,
         total_frames: 0,
-        fps: None,
+        fps,
         robot_type: None,
         fields,
         cameras,
@@ -435,11 +447,17 @@ fn infer_schema_from_features(
                     && bl.first().is_some_and(|b| !b.is_empty());
 
                 if is_image {
+                    let (h, w, c) = if let Some(first_bytes) = bl.first() {
+                        let enc = detect_image_encoding(first_bytes);
+                        extract_image_dimensions(first_bytes, enc)
+                    } else {
+                        (0, 0, 3)
+                    };
                     cameras.push(CameraInfo {
                         name: name.clone(),
-                        height: 0, // Unknown without decoding.
-                        width: 0,
-                        channels: 3,
+                        height: h,
+                        width: w,
+                        channels: c,
                         encoding: "compressed".to_string(),
                     });
                 } else {
@@ -601,11 +619,7 @@ fn build_frame(
                         if !img_bytes.is_empty() {
                             let encoding = detect_image_encoding(img_bytes);
                             let data = Bytes::from(img_bytes.clone());
-                            // For compressed images, dimensions are unknown without decoding.
-                            let (h, w, c) = match encoding {
-                                ImageEncoding::Raw => (0, 0, 3),
-                                _ => (0, 0, 3),
-                            };
+                            let (h, w, c) = extract_image_dimensions(img_bytes, encoding);
                             let image = LazyImage::from_bytes(data, h, w, c, encoding);
                             frame.images.insert(name.clone(), image);
                         }
@@ -647,24 +661,32 @@ enum FeatureClass {
 fn classify_feature(name: &str, value: &FeatureValue) -> FeatureClass {
     let lower = name.to_lowercase();
 
+    // Strip common prefixes (e.g., "steps/action" -> "action").
+    let stripped = lower
+        .strip_prefix("steps/")
+        .or_else(|| lower.strip_prefix("steps."))
+        .unwrap_or(&lower);
+
     // Image features: name contains "image" and value is bytes.
-    if lower.contains("image") {
+    if stripped.contains("image") {
         if let FeatureValue::Bytes(_) = value {
             return FeatureClass::Image;
         }
     }
 
     // Action feature.
-    if lower == "action" {
+    if stripped == "action" || stripped.ends_with("/action") || stripped.ends_with(".action") {
         return FeatureClass::Action;
     }
 
     // State/observation features.
-    if lower == "observation.state"
-        || lower == "observation/state"
-        || lower == "state"
-        || lower == "observation.joint_positions"
-        || lower == "observation/joint_positions"
+    if stripped == "observation.state"
+        || stripped == "observation/state"
+        || stripped == "state"
+        || stripped == "observation.joint_positions"
+        || stripped == "observation/joint_positions"
+        || stripped.starts_with("observation/") && !stripped.contains("image")
+        || stripped.starts_with("observation.") && !stripped.contains("image")
     {
         return FeatureClass::State;
     }
@@ -730,6 +752,122 @@ fn store_in_metadata(
     };
 
     metadata.insert(name.to_string(), json_value);
+}
+
+/// Extract image dimensions from image data.
+///
+/// For compressed images (JPEG/PNG), parses headers directly.
+/// For raw images, infers dimensions from byte length using common resolutions.
+/// Returns (height, width, channels).
+fn extract_image_dimensions(data: &[u8], encoding: ImageEncoding) -> (u32, u32, u8) {
+    match encoding {
+        ImageEncoding::Jpeg => extract_jpeg_dimensions(data).unwrap_or((0, 0, 3)),
+        ImageEncoding::Png => extract_png_dimensions(data).unwrap_or((0, 0, 3)),
+        ImageEncoding::CompressedBytes => {
+            // Try JPEG first, then PNG, then raw inference
+            extract_jpeg_dimensions(data)
+                .or_else(|| extract_png_dimensions(data))
+                .or_else(|| infer_raw_image_dimensions(data.len()))
+                .unwrap_or((0, 0, 3))
+        }
+        ImageEncoding::Raw => {
+            infer_raw_image_dimensions(data.len()).unwrap_or((0, 0, 3))
+        }
+    }
+}
+
+/// Infer image dimensions from raw pixel data byte length.
+///
+/// Assumes RGB (3 channels) and checks common robotics image resolutions.
+fn infer_raw_image_dimensions(byte_len: usize) -> Option<(u32, u32, u8)> {
+    // Common robotics image resolutions (h, w)
+    const COMMON_RESOLUTIONS: &[(u32, u32)] = &[
+        (480, 640),   // VGA
+        (240, 320),   // QVGA
+        (256, 256),   // Square
+        (224, 224),   // ImageNet
+        (64, 64),     // Small square
+        (128, 128),
+        (84, 84),     // Gym/DMC
+        (96, 96),
+        (48, 48),
+        (360, 640),
+        (480, 848),
+        (720, 1280),  // HD
+        (1080, 1920), // Full HD
+        (256, 320),
+        (200, 200),
+        (100, 100),
+        (512, 512),
+    ];
+
+    for channels in [3u8, 4, 1] {
+        let pixels = byte_len / channels as usize;
+        if pixels * channels as usize != byte_len {
+            continue;
+        }
+        for &(h, w) in COMMON_RESOLUTIONS {
+            if (h as usize) * (w as usize) == pixels {
+                return Some((h, w, channels));
+            }
+        }
+    }
+    None
+}
+
+/// Parse JPEG SOF marker to extract (height, width, channels).
+fn extract_jpeg_dimensions(data: &[u8]) -> Option<(u32, u32, u8)> {
+    if data.len() < 4 || data[0] != 0xFF || data[1] != 0xD8 {
+        return None;
+    }
+    let mut pos = 2;
+    while pos + 4 < data.len() {
+        if data[pos] != 0xFF {
+            pos += 1;
+            continue;
+        }
+        let marker = data[pos + 1];
+        // SOF0..SOF3 markers contain image dimensions
+        if matches!(marker, 0xC0..=0xC3) {
+            if pos + 9 >= data.len() {
+                return None;
+            }
+            let h = u16::from_be_bytes([data[pos + 5], data[pos + 6]]) as u32;
+            let w = u16::from_be_bytes([data[pos + 7], data[pos + 8]]) as u32;
+            let c = data[pos + 9];
+            return Some((h, w, c));
+        }
+        // Skip this marker segment
+        if pos + 3 >= data.len() {
+            return None;
+        }
+        let segment_len = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as usize;
+        pos += 2 + segment_len;
+    }
+    None
+}
+
+/// Parse PNG IHDR chunk to extract (height, width, channels).
+fn extract_png_dimensions(data: &[u8]) -> Option<(u32, u32, u8)> {
+    // PNG: 8-byte magic + IHDR chunk (4 length + 4 "IHDR" + 4 width + 4 height + 1 bit_depth + 1 color_type)
+    if data.len() < 26 || data[0] != 0x89 || data[1] != 0x50 {
+        return None;
+    }
+    // IHDR starts at byte 8: 4-byte length, 4-byte "IHDR" type
+    if &data[12..16] != b"IHDR" {
+        return None;
+    }
+    let w = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
+    let h = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
+    let color_type = data[25];
+    let c = match color_type {
+        0 => 1, // Grayscale
+        2 => 3, // RGB
+        4 => 2, // Grayscale + Alpha
+        6 => 4, // RGBA
+        _ => 3, // Default to RGB
+    };
+    Some((h, w, c))
 }
 
 // ---------------------------------------------------------------------------

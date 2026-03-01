@@ -324,6 +324,24 @@ pub fn extract_all_episodes_data(
                             feat_data.push(vec);
                         }
                     }
+                    DataType::List(_) | DataType::LargeList(_) => {
+                        // Variable-length list — common in HuggingFace parquet files.
+                        let list_array = col.as_list::<i32>();
+                        let inner = list_array.value(row);
+                        if let Some(float_values) =
+                            inner.as_any().downcast_ref::<Float32Array>()
+                        {
+                            let vec: Vec<f32> =
+                                (0..float_values.len()).map(|i| float_values.value(i)).collect();
+                            feat_data.push(vec);
+                        } else if let Some(f64_values) =
+                            inner.as_any().downcast_ref::<arrow::array::Float64Array>()
+                        {
+                            let vec: Vec<f32> =
+                                (0..f64_values.len()).map(|i| f64_values.value(i) as f32).collect();
+                            feat_data.push(vec);
+                        }
+                    }
                     DataType::Float32 => {
                         if let Some(float_col) = col
                             .as_any()
@@ -340,7 +358,24 @@ pub fn extract_all_episodes_data(
                             feat_data.push(vec![f64_col.value(row) as f32]);
                         }
                     }
-                    _ => {}
+                    DataType::Boolean => {
+                        if let Some(bool_col) = col
+                            .as_any()
+                            .downcast_ref::<arrow::array::BooleanArray>()
+                        {
+                            feat_data.push(vec![if bool_col.value(row) { 1.0 } else { 0.0 }]);
+                        }
+                    }
+                    _ => {
+                        // Log once per feature for debugging.
+                        if row == 0 {
+                            eprintln!(
+                                "warning: skipping feature '{}' with unsupported Arrow type {:?}",
+                                feat_name,
+                                col.data_type()
+                            );
+                        }
+                    }
                 }
             }
         }

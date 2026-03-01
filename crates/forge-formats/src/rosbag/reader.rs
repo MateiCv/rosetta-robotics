@@ -167,7 +167,23 @@ impl FormatReader for RosbagReader {
                 self.inspect_ros1_bag(path, &mut metadata)
             }
             RosBagSubFormat::Ros2Mcap => {
-                self.inspect_ros2_mcap(path, &mut metadata)
+                if path.is_dir() {
+                    // Writer creates a directory of per-episode .mcap files.
+                    // Inspect the first one for schema, then count all files for episodes.
+                    let bag_files = collect_bag_files(path);
+                    let first = bag_files.first().ok_or_else(|| {
+                        forge_core::ForgeError::Inspection {
+                            path: path.to_path_buf(),
+                            reason: "Directory contains no .mcap/.bag files".to_string(),
+                        }
+                    })?;
+                    let mut info = self.inspect_ros2_mcap(first, &mut metadata)?;
+                    info.total_episodes = bag_files.len();
+                    info.path = path.to_path_buf();
+                    Ok(info)
+                } else {
+                    self.inspect_ros2_mcap(path, &mut metadata)
+                }
             }
             RosBagSubFormat::Ros2Db3 => {
                 metadata.insert(
@@ -337,7 +353,7 @@ impl RosbagReader {
                 tp.contains("Image") || tp.contains("CompressedImage")
             })
             .map(|(topic, _)| CameraInfo {
-                name: topic.trim_start_matches('/').replace('/', "_"),
+                name: crate::rosbag::ros2::extract_camera_name_from_topic(topic),
                 height: 0,
                 width: 0,
                 channels: 3,
@@ -419,13 +435,16 @@ impl RosbagReader {
             serde_json::to_value(&topics).unwrap_or_default(),
         );
 
+        // Infer FPS from message timestamps by reading the actual messages.
+        let (fps, total_frames) = infer_fps_from_mcap(&file_data);
+
         let cameras: Vec<CameraInfo> = topics
             .iter()
             .filter(|(_, schema)| {
                 schema.contains("Image") || schema.contains("CompressedImage")
             })
             .map(|(topic, _)| CameraInfo {
-                name: topic.trim_start_matches('/').replace('/', "_"),
+                name: crate::rosbag::ros2::extract_camera_name_from_topic(topic),
                 height: 0,
                 width: 0,
                 channels: 3,
@@ -435,12 +454,26 @@ impl RosbagReader {
 
         let fields: Vec<FieldSchema> = topics
             .iter()
-            .filter(|(_, schema)| schema.contains("JointState"))
-            .map(|(topic, _)| FieldSchema {
-                name: topic.trim_start_matches('/').replace('/', "_"),
-                shape: Vec::new(),
-                dtype: forge_core::Dtype::Float64,
-                description: Some("Joint state from MCAP".to_string()),
+            .filter(|(_, schema)| {
+                schema.contains("JointState") || schema.contains("Float64MultiArray")
+            })
+            .map(|(topic, schema)| {
+                let name = if schema.contains("Float64MultiArray") {
+                    topic.trim_start_matches('/').to_string()
+                } else {
+                    topic.trim_start_matches('/').replace('/', "_")
+                };
+                let desc = if schema.contains("Float64MultiArray") {
+                    "Action data from MCAP"
+                } else {
+                    "Joint state from MCAP"
+                };
+                FieldSchema {
+                    name,
+                    shape: Vec::new(),
+                    dtype: forge_core::Dtype::Float64,
+                    description: Some(desc.to_string()),
+                }
             })
             .collect();
 
@@ -448,14 +481,69 @@ impl RosbagReader {
             format: "rosbag".to_string(),
             path: path.to_path_buf(),
             total_episodes: 1,
-            total_frames: 0,
-            fps: None,
+            total_frames: total_frames,
+            fps,
             robot_type: None,
             fields,
             cameras,
             metadata: metadata.clone(),
         })
     }
+}
+
+/// Infer FPS from MCAP message timestamps by grouping into frames.
+///
+/// Uses the same frame alignment window as the reader to count frames,
+/// then computes FPS = (num_frames - 1) / duration_seconds.
+/// Returns (Some(fps), frame_count) or (None, 0) if unable to compute.
+fn infer_fps_from_mcap(file_data: &[u8]) -> (Option<f64>, usize) {
+    let stream = match mcap::MessageStream::new(file_data) {
+        Ok(s) => s,
+        Err(_) => return (None, 0),
+    };
+
+    let mut timestamps: Vec<u64> = Vec::new();
+    for msg in stream.flatten() {
+        timestamps.push(msg.log_time);
+    }
+
+    if timestamps.len() < 2 {
+        return (None, timestamps.len());
+    }
+
+    timestamps.sort_unstable();
+
+    // Group timestamps into frames using the same window as the reader (10ms).
+    let window_ns: u64 = 10_000_000;
+    let mut frame_count = 1usize;
+    let mut anchor = timestamps[0];
+    for &ts in &timestamps[1..] {
+        if ts.saturating_sub(anchor) > window_ns {
+            frame_count += 1;
+            anchor = ts;
+        }
+    }
+
+    let first_ts = timestamps[0];
+    let last_ts = *timestamps.last().unwrap();
+    let duration_ns = last_ts - first_ts;
+
+    if duration_ns == 0 || frame_count < 2 {
+        return (None, frame_count);
+    }
+
+    let duration_secs = duration_ns as f64 / 1_000_000_000.0;
+    let fps = (frame_count - 1) as f64 / duration_secs;
+
+    // Round to nearest integer if close (many datasets use integer FPS)
+    let rounded = fps.round();
+    let fps = if (fps - rounded).abs() < 0.5 {
+        rounded
+    } else {
+        (fps * 10.0).round() / 10.0
+    };
+
+    (Some(fps), frame_count)
 }
 
 /// Scored format detector for ROS bag datasets.

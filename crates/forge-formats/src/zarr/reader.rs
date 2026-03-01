@@ -80,15 +80,18 @@ impl FormatReader for ZarrReader {
             }
         }
 
-        // Read .zattrs from root for metadata.
+        // Read .zattrs from root for metadata (may contain fps).
         let metadata = read_root_zattrs(path);
+        let fps = metadata
+            .get("fps")
+            .and_then(|v| v.as_f64());
 
         Ok(DatasetInfo {
             format: "zarr".to_string(),
             path: path.to_path_buf(),
             total_episodes,
             total_frames,
-            fps: None,
+            fps,
             robot_type: None,
             fields,
             cameras,
@@ -455,9 +458,11 @@ impl ZarrArrayInfo {
 
     /// Camera name derived from the array name.
     fn camera_name(&self) -> String {
-        // Strip "data/" prefix and common prefixes like "img_", "images/"
+        // Strip "data/" prefix and common prefixes like "img/", "img_", "images/"
         let name = &self.name;
-        if let Some(rest) = name.strip_prefix("images/") {
+        if let Some(rest) = name.strip_prefix("img/") {
+            rest.to_string()
+        } else if let Some(rest) = name.strip_prefix("images/") {
             rest.to_string()
         } else if let Some(rest) = name.strip_prefix("img_") {
             rest.to_string()
@@ -753,7 +758,6 @@ fn build_episode(
 
     let mut numeric_batches: Vec<NumericBatch> = Vec::new();
     let mut image_batches: Vec<ImageBatch> = Vec::new();
-    let mut metadata_infos: Vec<(String, &ZarrArrayInfo)> = Vec::new();
 
     for info in array_infos {
         // Skip arrays with insufficient length.
@@ -782,17 +786,9 @@ fn build_episode(
                     // Failed to read image array — skip silently.
                 }
             }
-        } else if array_name == "action"
-            || array_name.contains("action")
-            || array_name.ends_with("/action")
-            || array_name == "state"
-            || array_name == "obs"
-            || array_name.contains("state")
-            || array_name.contains("observation")
-            || array_name.contains("robot_eef")
-            || array_name.contains("joint_pos")
-        {
-            // Batch-read numeric array for this episode.
+        } else {
+            // Read ALL non-image numeric arrays (not just action/state patterns).
+            // This preserves extra arrays like keypoint, n_contacts, etc.
             match batch_read_numeric_array(store, info, start, end) {
                 Ok(all_data) => {
                     let per_frame_size: usize = info.per_frame_shape().iter().product();
@@ -811,16 +807,16 @@ fn build_episode(
                     // Failed to read numeric array — skip silently.
                 }
             }
-        } else {
-            metadata_infos.push((array_name.clone(), info));
         }
     }
 
     for frame_idx in 0..num_frames {
-        let global_idx = start + frame_idx;
         let mut frame = Frame::new(frame_idx);
 
         // Assign numeric arrays.
+        // action-like → frame.action, first non-action → frame.state,
+        // everything else → frame.metadata with actual data for round-trip fidelity.
+        let mut state_assigned = false;
         for batch in &numeric_batches {
             if frame_idx >= batch.frames.len() {
                 continue;
@@ -834,8 +830,23 @@ fn build_episode(
                 || batch.name.ends_with("/action")
             {
                 frame.action = Some(LazyArray::from_vec(data, shape, dtype));
-            } else {
+            } else if !state_assigned
+                && (batch.name == "state"
+                    || batch.name == "obs"
+                    || batch.name.contains("state")
+                    || batch.name.contains("observation"))
+            {
                 frame.state = Some(LazyArray::from_vec(data, shape, dtype));
+                state_assigned = true;
+            } else {
+                // Store extra numeric arrays with actual data for round-trip.
+                frame.metadata.insert(
+                    format!("zarr_extra:{}", batch.name),
+                    serde_json::json!({
+                        "data": data,
+                        "shape": shape,
+                    }),
+                );
             }
         }
 
@@ -852,22 +863,6 @@ fn build_episode(
                 ImageEncoding::Raw,
             );
             frame.images.insert(batch.camera_name.clone(), image);
-        }
-
-        // Preserve metadata references for unknown arrays.
-        for (array_name, info) in &metadata_infos {
-            if info.shape.is_empty() || (info.shape[0] as usize) <= global_idx {
-                continue;
-            }
-            frame.metadata.insert(
-                format!("zarr_array:{array_name}"),
-                serde_json::json!({
-                    "store_path": info.store_path,
-                    "global_index": global_idx,
-                    "shape": info.per_frame_shape(),
-                    "dtype": info.dtype_str,
-                }),
-            );
         }
 
         episode.frames.push(frame);
@@ -967,7 +962,8 @@ fn batch_read_image_array(
     let subset = ArraySubset::new_with_ranges(&ranges);
 
     // Calculate per-frame element count (all dims except the first).
-    let per_frame_elements: usize = shape[1..].iter().map(|&d| d as usize).product();
+    // Use .max(1) to avoid chunks(0) panic on zero-dimension arrays.
+    let per_frame_elements: usize = shape[1..].iter().map(|&d| d as usize).product::<usize>().max(1);
 
     if is_float {
         // Float images: read as f32, convert to uint8 RGB.

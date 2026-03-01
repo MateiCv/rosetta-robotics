@@ -183,6 +183,7 @@ fn group_mcap_messages_into_frames(
 
             match classify_ros2_schema(&msg.schema_name) {
                 Ros2Role::Image => {
+                    let camera_key = extract_camera_name_from_topic(&msg.topic);
                     if let Some((height, width, encoding, image_data)) =
                         parse_cdr_image(&msg.data)
                     {
@@ -203,7 +204,7 @@ fn group_mcap_messages_into_frames(
                             channels,
                             img_encoding,
                         );
-                        frame.images.insert(topic_key, image);
+                        frame.images.insert(camera_key, image);
                     } else {
                         warnings.push(ReadWarning {
                             episode_id: Some("0".to_string()),
@@ -217,6 +218,7 @@ fn group_mcap_messages_into_frames(
                     }
                 }
                 Ros2Role::CompressedImage => {
+                    let camera_key = extract_camera_name_from_topic(&msg.topic);
                     if let Some((format, image_data)) = parse_cdr_compressed_image(&msg.data) {
                         let img_encoding = match format.to_lowercase().as_str() {
                             f if f.contains("jpeg") || f.contains("jpg") => ImageEncoding::Jpeg,
@@ -230,7 +232,7 @@ fn group_mcap_messages_into_frames(
                             3,
                             img_encoding,
                         );
-                        frame.images.insert(topic_key, image);
+                        frame.images.insert(camera_key, image);
                     } else {
                         warnings.push(ReadWarning {
                             episode_id: Some("0".to_string()),
@@ -301,6 +303,27 @@ fn group_mcap_messages_into_frames(
                             message: format!(
                                 "Failed to parse CDR {} on topic {}",
                                 msg.schema_name, msg.topic
+                            ),
+                            severity: WarningSeverity::Warning,
+                        });
+                        store_opaque_metadata(&mut frame, &topic_key, &msg.data);
+                    }
+                }
+                Ros2Role::Float64MultiArray => {
+                    if let Some(values) = parse_cdr_float64_multi_array(&msg.data) {
+                        if frame.action.is_none() {
+                            let shape = vec![values.len()];
+                            frame.action =
+                                Some(LazyArray::from_vec(values, shape, Dtype::Float64));
+                        } else {
+                            frame.metadata.insert(topic_key, serde_json::json!(values));
+                        }
+                    } else {
+                        warnings.push(ReadWarning {
+                            episode_id: Some("0".to_string()),
+                            message: format!(
+                                "Failed to parse CDR Float64MultiArray on topic {}",
+                                msg.topic
                             ),
                             severity: WarningSeverity::Warning,
                         });
@@ -497,6 +520,7 @@ enum Ros2Role {
     CompressedImage,
     JointState,
     Pose,
+    Float64MultiArray,
     Unknown,
 }
 
@@ -506,6 +530,7 @@ fn classify_ros2_schema(schema_name: &str) -> Ros2Role {
         "sensor_msgs/msg/CompressedImage" => Ros2Role::CompressedImage,
         "sensor_msgs/msg/JointState" => Ros2Role::JointState,
         "geometry_msgs/msg/PoseStamped" | "geometry_msgs/msg/Twist" => Ros2Role::Pose,
+        "std_msgs/msg/Float64MultiArray" => Ros2Role::Float64MultiArray,
         _ => Ros2Role::Unknown,
     }
 }
@@ -595,9 +620,51 @@ fn parse_cdr_twist(data: &[u8]) -> Option<Vec<f64>> {
     Some(values)
 }
 
+/// Parse a CDR-encoded `std_msgs/msg/Float64MultiArray`.
+///
+/// Fields: layout(MultiArrayLayout) -> data(sequence<f64>)
+/// MultiArrayLayout: dim(sequence<MultiArrayDimension>) -> data_offset(u32)
+/// MultiArrayDimension: label(string) + size(u32) + stride(u32)
+fn parse_cdr_float64_multi_array(data: &[u8]) -> Option<Vec<f64>> {
+    let mut reader = CdrReader::new(data)?;
+
+    // MultiArrayLayout.dim: sequence<MultiArrayDimension>
+    let dim_count = reader.read_u32()? as usize;
+    for _ in 0..dim_count {
+        let _label = reader.read_string()?;
+        let _size = reader.read_u32()?;
+        let _stride = reader.read_u32()?;
+    }
+
+    let _data_offset = reader.read_u32()?;
+
+    // data: sequence<float64>
+    let count = reader.read_u32()? as usize;
+    let mut values = Vec::with_capacity(count);
+    for _ in 0..count {
+        values.push(reader.read_f64()?);
+    }
+    Some(values)
+}
+
 /// Sanitize a ROS topic name for use as a frame key.
 fn sanitize_topic_name(topic: &str) -> String {
     topic.trim_start_matches('/').replace('/', "_")
+}
+
+/// Extract the original camera name from a ROS image topic.
+///
+/// The rosbag writer creates topics like `/camera/{name}/image_raw`.
+/// This function strips the wrapping to recover the original camera name.
+/// Falls back to `sanitize_topic_name` if the pattern doesn't match.
+pub(crate) fn extract_camera_name_from_topic(topic: &str) -> String {
+    let stripped = topic.trim_start_matches('/');
+    if let Some(rest) = stripped.strip_prefix("camera/") {
+        if let Some(name) = rest.strip_suffix("/image_raw") {
+            return name.to_string();
+        }
+    }
+    sanitize_topic_name(topic)
 }
 
 /// Store raw message bytes as opaque base64 metadata.

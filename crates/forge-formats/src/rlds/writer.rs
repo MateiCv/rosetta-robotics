@@ -31,6 +31,8 @@ pub struct RLDSWriter {
     episodes_written: Vec<WrittenEpisodeInfo>,
     /// If true, sort JSON keys for deterministic output.
     deterministic: bool,
+    /// Frames per second, if set.
+    fps: Option<f64>,
 }
 
 impl RLDSWriter {
@@ -39,6 +41,7 @@ impl RLDSWriter {
         Self {
             episodes_written: Vec::new(),
             deterministic: false,
+            fps: None,
         }
     }
 }
@@ -190,6 +193,10 @@ impl FormatWriter for RLDSWriter {
         self.deterministic = deterministic;
     }
 
+    fn set_fps(&mut self, fps: f64) {
+        self.fps = Some(fps);
+    }
+
     fn finalize(&mut self, output_path: &Path, dataset_info: &DatasetInfo) -> ForgeResult<()> {
         let total_shards = self.episodes_written.len();
         let train_dir = output_path.join("train");
@@ -221,7 +228,7 @@ impl FormatWriter for RLDSWriter {
 
         let total_examples: usize = self.episodes_written.iter().map(|e| e.num_frames).sum();
 
-        let dataset_info_json = serde_json::json!({
+        let mut dataset_info_json = serde_json::json!({
             "name": dataset_name,
             "description": description,
             "splits": {
@@ -232,6 +239,10 @@ impl FormatWriter for RLDSWriter {
                 }
             }
         });
+        // Write FPS if available.
+        if let Some(fps) = self.fps.or(dataset_info.fps) {
+            dataset_info_json["fps"] = serde_json::json!(fps);
+        }
 
         let sorted = sort_json_keys(dataset_info_json);
         let info_str =

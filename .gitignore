@@ -62,6 +62,15 @@ Thumbs.db
 test_*/
 !tests/
 
+# Downloaded test datasets (real-world data for round-trip tests)
+test_data/
+sample_data/test_datasets/
+sample_data/lerobot_pusht/
+
+# Benchmark artifacts
+.bench_venv/
+bench_output/
+
 # Large sample data and conversions
 # Keep sample_data/ for examples, but ignore large downloads
 sample_data/**/*.tfrecord*

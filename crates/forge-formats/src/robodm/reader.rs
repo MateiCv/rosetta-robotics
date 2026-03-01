@@ -100,9 +100,14 @@ fn read_vint(reader: &mut impl Read, keep_marker: bool) -> ForgeResult<Option<(u
     let mut value = if keep_marker {
         first_byte as u64
     } else {
-        // Mask off the marker bit
-        let mask = 0xFF >> len;
-        (first_byte & mask) as u64
+        // Mask off the marker bit. For len==8, all bits in the first
+        // byte are marker/length bits, so the data contribution is 0.
+        if len >= 8 {
+            0u64
+        } else {
+            let mask: u8 = 0xFF >> len;
+            (first_byte & mask) as u64
+        }
     };
 
     // Read remaining bytes
@@ -440,11 +445,18 @@ impl FormatReader for RoboDMReader {
             });
         }
 
-        // Sample the first file to infer schema
+        // Try ffmpeg-based inspection first for accurate stream metadata,
+        // then fall back to EBML heuristic parsing.
         let first_file = &vla_files[0];
+        let total_episodes = vla_files.len();
+
+        if let Ok(info) = inspect_vla_ffmpeg(first_file, path, total_episodes) {
+            return Ok(info);
+        }
+
+        // Fallback: EBML heuristic parsing
         let mut reader = BufReader::new(File::open(first_file)?);
 
-        // Verify EBML header
         if !verify_ebml_header(&mut reader)? {
             return Err(ForgeError::Inspection {
                 path: path.to_path_buf(),
@@ -452,7 +464,6 @@ impl FormatReader for RoboDMReader {
             });
         }
 
-        // Skip header and parse body elements
         let body_start = skip_ebml_header(&mut reader)?;
         let file_size = reader.seek(SeekFrom::End(0))?;
         reader.seek(SeekFrom::Start(body_start))?;
@@ -460,7 +471,6 @@ impl FormatReader for RoboDMReader {
         let body_size = file_size - body_start;
         let elements = parse_ebml_elements(&mut reader, body_size)?;
 
-        // Analyze elements to infer schema
         let mut has_images = false;
         let mut has_numeric_arrays = false;
         let mut inferred_action_dim = 0usize;
@@ -476,7 +486,6 @@ impl FormatReader for RoboDMReader {
                 ElementClass::NumericArray { values, .. } => {
                     has_numeric_arrays = true;
                     let dim = values.len();
-                    // First numeric array is likely action, second is state
                     if inferred_action_dim == 0 {
                         inferred_action_dim = dim;
                     } else if inferred_state_dim == 0 {
@@ -508,7 +517,7 @@ impl FormatReader for RoboDMReader {
         let cameras = if has_images {
             vec![CameraInfo {
                 name: "main".to_string(),
-                height: 0, // Unknown without decoding
+                height: 0,
                 width: 0,
                 channels: 3,
                 encoding: "compressed".to_string(),
@@ -517,28 +526,16 @@ impl FormatReader for RoboDMReader {
             Vec::new()
         };
 
-        // Each VLA file is treated as one episode
-        let total_episodes = vla_files.len();
-
         let mut metadata = HashMap::new();
-        metadata.insert(
-            "schema_status".to_string(),
-            serde_json::json!("heuristic"),
-        );
-        metadata.insert(
-            "ebml_elements_sampled".to_string(),
-            serde_json::json!(elements.len()),
-        );
-        metadata.insert(
-            "images_detected".to_string(),
-            serde_json::json!(image_count),
-        );
+        metadata.insert("schema_status".to_string(), serde_json::json!("heuristic"));
+        metadata.insert("ebml_elements_sampled".to_string(), serde_json::json!(elements.len()));
+        metadata.insert("images_detected".to_string(), serde_json::json!(image_count));
 
         Ok(DatasetInfo {
             format: "robodm".to_string(),
             path: path.to_path_buf(),
             total_episodes,
-            total_frames: 0, // Cannot determine without full parse
+            total_frames: 0,
             fps: None,
             robot_type: None,
             fields,
@@ -566,7 +563,11 @@ impl FormatReader for RoboDMReader {
         });
 
         for (ep_idx, vla_path) in vla_files.iter().enumerate() {
-            match read_single_vla(vla_path, ep_idx) {
+            // Try ffmpeg-based reader first (proper stream demuxing),
+            // fall back to EBML heuristic parser.
+            let result = read_single_vla_ffmpeg(vla_path, ep_idx)
+                .or_else(|_| read_single_vla(vla_path, ep_idx));
+            match result {
                 Ok((episode, mut ep_warnings)) => {
                     warnings.append(&mut ep_warnings);
                     episodes.push(episode);
@@ -743,6 +744,421 @@ fn read_single_vla(
     }
 
     Ok((episode, warnings))
+}
+
+/// Read a `.vla` file using ffmpeg demuxer for proper stream-based parsing.
+///
+/// This approach uses ffmpeg's Matroska demuxer to read packets with their
+/// stream indices and PTS values, giving accurate frame grouping and feature
+/// classification via the FEATURE_NAME stream metadata.
+fn read_single_vla_ffmpeg(
+    vla_path: &Path,
+    episode_index: usize,
+) -> ForgeResult<(Episode, Vec<ReadWarning>)> {
+    use ffmpeg_next as ffmpeg;
+
+    ffmpeg::init().map_err(|e| ForgeError::Video(format!("ffmpeg init: {e}")))?;
+
+    let mut input = ffmpeg::format::input(vla_path)
+        .map_err(|e| ForgeError::Video(format!("open {}: {e}", vla_path.display())))?;
+
+    let ep_id = episode_index.to_string();
+    let warnings = Vec::new();
+
+    // Classify each stream by its FEATURE_NAME metadata.
+    #[derive(Debug, Clone)]
+    enum StreamRole {
+        Image(String, u32, u32), // camera name, height, width
+        Action,
+        State,
+        Unknown(String),
+    }
+
+    let mut stream_roles: HashMap<usize, StreamRole> = HashMap::new();
+    for stream in input.streams() {
+        let idx = stream.index();
+        let meta = stream.metadata();
+        let feature_name = meta.get("FEATURE_NAME").unwrap_or("");
+        let feature_type = meta.get("FEATURE_TYPE").unwrap_or("");
+
+        let role = if feature_name.contains("image") || feature_type.contains("uint8") {
+            // Extract camera name from "observation/images/<name>"
+            let cam = feature_name
+                .strip_prefix("observation/images/")
+                .unwrap_or("main")
+                .to_string();
+            let (h, w) = parse_image_shape(feature_type);
+            StreamRole::Image(cam, h, w)
+        } else if feature_name == "action" {
+            StreamRole::Action
+        } else if feature_name.contains("state") || feature_name.contains("observation") {
+            StreamRole::State
+        } else if !feature_name.is_empty() {
+            StreamRole::Unknown(feature_name.to_string())
+        } else {
+            // No metadata — fall back to stream order heuristic
+            // First stream is usually image, then action, then state
+            match idx {
+                0 => StreamRole::Image("main".to_string(), 0, 0),
+                1 => StreamRole::Action,
+                2 => StreamRole::State,
+                _ => StreamRole::Unknown(format!("stream_{idx}")),
+            }
+        };
+        stream_roles.insert(idx, role);
+    }
+
+    // Read all packets, grouped by PTS.
+    let mut pts_packets: std::collections::BTreeMap<i64, Vec<(usize, Vec<u8>)>> =
+        std::collections::BTreeMap::new();
+
+    for (stream, packet) in input.packets() {
+        let pts = packet.pts().unwrap_or(0);
+        let idx = stream.index();
+        let data = packet.data().unwrap_or(&[]).to_vec();
+        pts_packets.entry(pts).or_default().push((idx, data));
+    }
+
+    let mut episode = Episode::new(ep_id);
+    episode.metadata.insert(
+        "source_file".to_string(),
+        serde_json::json!(vla_path.to_string_lossy()),
+    );
+    episode.metadata.insert("format".to_string(), serde_json::json!("robodm"));
+
+    // Build one frame per PTS value.
+    for (timestep, (_pts, packets)) in pts_packets.iter().enumerate() {
+        let mut frame = Frame::new(timestep);
+
+        for (stream_idx, data) in packets {
+            let role = stream_roles.get(stream_idx).cloned();
+            match role {
+                Some(StreamRole::Image(cam_name, meta_h, meta_w)) => {
+                    // Unpickle numpy image or use stream metadata dims
+                    if let Some((img_data, h, w)) = unpickle_numpy_image(data) {
+                        let image = LazyImage::from_bytes(
+                            Bytes::from(img_data),
+                            h,
+                            w,
+                            3,
+                            ImageEncoding::Raw,
+                        );
+                        frame.images.insert(cam_name, image);
+                    } else if let Some(raw) = unpickle_raw_bytes(data) {
+                        // Got raw bytes but couldn't parse shape; use stream metadata
+                        let image = LazyImage::from_bytes(
+                            Bytes::from(raw),
+                            meta_h,
+                            meta_w,
+                            3,
+                            ImageEncoding::Raw,
+                        );
+                        frame.images.insert(cam_name, image);
+                    } else {
+                        // Fallback: store as compressed with stream metadata dims
+                        let encoding = detect_image_encoding(data);
+                        let image = LazyImage::from_bytes(
+                            Bytes::from(data.clone()),
+                            meta_h,
+                            meta_w,
+                            3,
+                            encoding,
+                        );
+                        frame.images.insert(cam_name, image);
+                    }
+                }
+                Some(StreamRole::Action) => {
+                    if let Some(values) = unpickle_numpy_f32_to_f64(data) {
+                        let shape = vec![values.len()];
+                        frame.action =
+                            Some(LazyArray::from_vec(values, shape, Dtype::Float32));
+                    }
+                }
+                Some(StreamRole::State) => {
+                    if let Some(values) = unpickle_numpy_f32_to_f64(data) {
+                        let shape = vec![values.len()];
+                        frame.state =
+                            Some(LazyArray::from_vec(values, shape, Dtype::Float32));
+                    }
+                }
+                Some(StreamRole::Unknown(name)) => {
+                    if let Some(values) = unpickle_numpy_f32_to_f64(data) {
+                        frame.metadata.insert(name, serde_json::json!(values));
+                    }
+                }
+                None => {}
+            }
+        }
+
+        episode.frames.push(frame);
+    }
+
+    Ok((episode, warnings))
+}
+
+/// Inspect a `.vla` file using ffmpeg for stream metadata.
+fn inspect_vla_ffmpeg(
+    vla_path: &Path,
+    dataset_path: &Path,
+    total_episodes: usize,
+) -> ForgeResult<DatasetInfo> {
+    use ffmpeg_next as ffmpeg;
+
+    ffmpeg::init().map_err(|e| ForgeError::Video(format!("ffmpeg init: {e}")))?;
+
+    let input = ffmpeg::format::input(vla_path)
+        .map_err(|e| ForgeError::Inspection {
+            path: vla_path.to_path_buf(),
+            reason: format!("ffmpeg open: {e}"),
+        })?;
+
+    let mut fields = Vec::new();
+    let mut cameras = Vec::new();
+    let mut fps = None;
+
+    for stream in input.streams() {
+        let meta = stream.metadata();
+        let feature_name = meta.get("FEATURE_NAME").unwrap_or("");
+        let feature_type = meta.get("FEATURE_TYPE").unwrap_or("");
+
+        // Parse shape from FEATURE_TYPE like "dtype=float32; shape=(14,))"
+        let shape = parse_feature_type_shape(feature_type);
+
+        if feature_name.contains("image") || feature_type.contains("uint8") {
+            let cam_name = feature_name
+                .strip_prefix("observation/images/")
+                .unwrap_or("main")
+                .to_string();
+            let (h, w) = parse_image_shape(feature_type);
+            cameras.push(CameraInfo {
+                name: cam_name,
+                height: h,
+                width: w,
+                channels: 3,
+                encoding: "raw".to_string(),
+            });
+        } else if feature_name == "action" {
+            fields.push(FieldSchema {
+                name: "action".to_string(),
+                shape,
+                dtype: Dtype::Float32,
+                description: None,
+            });
+        } else if feature_name.contains("state") || feature_name.contains("observation") {
+            fields.push(FieldSchema {
+                name: "state".to_string(),
+                shape,
+                dtype: Dtype::Float32,
+                description: None,
+            });
+        }
+
+        // Extract FPS from stream time base
+        let r = stream.rate();
+        if r.numerator() > 0 && r.denominator() > 0 {
+            fps = Some(r.numerator() as f64 / r.denominator() as f64);
+        }
+    }
+
+    // Count frames by reading packets in first file
+    let mut input2 = ffmpeg::format::input(vla_path)
+        .map_err(|e| ForgeError::Inspection {
+            path: vla_path.to_path_buf(),
+            reason: format!("ffmpeg open for counting: {e}"),
+        })?;
+
+    let mut max_pts: i64 = -1;
+    for (_stream, packet) in input2.packets() {
+        if let Some(pts) = packet.pts() {
+            if pts > max_pts {
+                max_pts = pts;
+            }
+        }
+    }
+    let frames_per_episode = if max_pts >= 0 { (max_pts + 1) as usize } else { 0 };
+
+    let mut metadata = HashMap::new();
+    metadata.insert("schema_status".to_string(), serde_json::json!("ffmpeg"));
+
+    Ok(DatasetInfo {
+        format: "robodm".to_string(),
+        path: dataset_path.to_path_buf(),
+        total_episodes,
+        total_frames: frames_per_episode * total_episodes,
+        fps,
+        robot_type: None,
+        fields,
+        cameras,
+        metadata,
+    })
+}
+
+/// Parse shape from FEATURE_TYPE string like "dtype=float32; shape=(14,))"
+fn parse_feature_type_shape(feature_type: &str) -> Vec<usize> {
+    if let Some(start) = feature_type.find("shape=(") {
+        let rest = &feature_type[start + 7..];
+        if let Some(end) = rest.find(')') {
+            let shape_str = &rest[..end];
+            return shape_str
+                .split(',')
+                .filter_map(|s| s.trim().parse::<usize>().ok())
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
+/// Parse image dimensions from FEATURE_TYPE string like "dtype=uint8; shape=(480, 640, 3))"
+fn parse_image_shape(feature_type: &str) -> (u32, u32) {
+    let shape = parse_feature_type_shape(feature_type);
+    if shape.len() >= 2 {
+        (shape[0] as u32, shape[1] as u32)
+    } else {
+        (0, 0)
+    }
+}
+
+/// Extract f32 values from a pickled numpy array, returning as f64.
+///
+/// Looks for the BYTEARRAY8 opcode (0x96) followed by 8-byte LE length,
+/// then raw f32 data. This is the format produced by `pickle_numpy_f32`.
+fn unpickle_numpy_f32_to_f64(data: &[u8]) -> Option<Vec<f64>> {
+    // Find BYTEARRAY8 opcode (0x96)
+    let pos = data.iter().position(|&b| b == 0x96)?;
+    if pos + 9 > data.len() {
+        return None;
+    }
+    let raw_len = u64::from_le_bytes(data[pos + 1..pos + 9].try_into().ok()?) as usize;
+    let raw_start = pos + 9;
+    if raw_start + raw_len > data.len() {
+        return None;
+    }
+    let raw = &data[raw_start..raw_start + raw_len];
+
+    // Interpret as f32 values
+    if raw.len() % 4 != 0 {
+        return None;
+    }
+    let values: Vec<f64> = raw
+        .chunks_exact(4)
+        .map(|chunk| {
+            let bytes = [chunk[0], chunk[1], chunk[2], chunk[3]];
+            f32::from_le_bytes(bytes) as f64
+        })
+        .collect();
+    Some(values)
+}
+
+/// Extract raw bytes from a pickled numpy array (without shape parsing).
+fn unpickle_raw_bytes(data: &[u8]) -> Option<Vec<u8>> {
+    // Find BYTEARRAY8 opcode (0x96)
+    let pos = data.iter().position(|&b| b == 0x96)?;
+    if pos + 9 > data.len() {
+        return None;
+    }
+    let raw_len = u64::from_le_bytes(data[pos + 1..pos + 9].try_into().ok()?) as usize;
+    let raw_start = pos + 9;
+    if raw_start + raw_len > data.len() || raw_len < 3 {
+        return None;
+    }
+    Some(data[raw_start..raw_start + raw_len].to_vec())
+}
+
+/// Extract image data from a pickled numpy array.
+///
+/// Returns (raw_rgb_bytes, height, width) if successful.
+fn unpickle_numpy_image(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
+    // Find BYTEARRAY8 opcode (0x96) for the raw data
+    let pos = data.iter().position(|&b| b == 0x96)?;
+    if pos + 9 > data.len() {
+        return None;
+    }
+    let raw_len = u64::from_le_bytes(data[pos + 1..pos + 9].try_into().ok()?) as usize;
+    let raw_start = pos + 9;
+    if raw_start + raw_len > data.len() || raw_len < 3 {
+        return None;
+    }
+    let raw = data[raw_start..raw_start + raw_len].to_vec();
+
+    // Try to find shape in the pickle stream.
+    // After the BYTEARRAY8, look for BININT1 (0x4b) values that form the shape.
+    // Shape for images is (height, width, 3) encoded as TUPLE3.
+    // Search after the raw data for the shape tuple.
+    let after_raw = raw_start + raw_len;
+    let shape = extract_pickle_shape(&data[after_raw..])?;
+
+    if shape.len() >= 2 {
+        let h = shape[0] as u32;
+        let w = shape[1] as u32;
+        // Verify: raw_len should equal h * w * channels
+        let channels = if shape.len() >= 3 { shape[2] } else { 3 };
+        if raw_len == (h as usize) * (w as usize) * channels {
+            return Some((raw, h, w));
+        }
+    }
+
+    // Fallback: can't determine dimensions
+    None
+}
+
+/// Extract shape tuple from pickle bytes after the dtype section.
+fn extract_pickle_shape(data: &[u8]) -> Option<Vec<usize>> {
+    // Look for a sequence of BININT1 (0x4b) or BININT2 (0x4d) followed by
+    // TUPLE1/TUPLE2/TUPLE3 (0x85/0x86/0x87).
+    let mut dims = Vec::new();
+    let mut i = 0;
+    while i < data.len() {
+        match data[i] {
+            0x4b if i + 1 < data.len() => {
+                // BININT1
+                dims.push(data[i + 1] as usize);
+                i += 2;
+            }
+            0x4d if i + 2 < data.len() => {
+                // BININT2
+                let val = u16::from_le_bytes([data[i + 1], data[i + 2]]) as usize;
+                dims.push(val);
+                i += 3;
+            }
+            0x4a if i + 4 < data.len() => {
+                // BININT (signed 32)
+                let val = i32::from_le_bytes([
+                    data[i + 1],
+                    data[i + 2],
+                    data[i + 3],
+                    data[i + 4],
+                ]);
+                if val >= 0 {
+                    dims.push(val as usize);
+                }
+                i += 5;
+            }
+            0x85 | 0x86 | 0x87 => {
+                // TUPLE1/2/3 — this marks the end of shape values
+                let expected_len = (data[i] - 0x84) as usize;
+                if dims.len() >= expected_len {
+                    return Some(dims[dims.len() - expected_len..].to_vec());
+                }
+                return Some(dims);
+            }
+            0x94 => {
+                // MEMOIZE — skip
+                i += 1;
+            }
+            _ => {
+                // If we already have dims and hit an unknown opcode, stop
+                if !dims.is_empty() {
+                    break;
+                }
+                i += 1;
+            }
+        }
+    }
+    if dims.is_empty() {
+        None
+    } else {
+        Some(dims)
+    }
 }
 
 // ---------------------------------------------------------------------------

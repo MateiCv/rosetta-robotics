@@ -52,7 +52,7 @@ pub struct V2InfoJson {
     pub data_path: String,
     /// Path template for video MP4 files.
     /// v2 default: "videos/{video_key}/episode_{episode_index:06d}.mp4"
-    #[serde(default = "default_v2_video_path")]
+    #[serde(default = "default_v2_video_path", deserialize_with = "deserialize_video_path")]
     pub video_path: String,
     /// Feature definitions keyed by feature name.
     #[serde(default)]
@@ -72,6 +72,15 @@ fn default_v2_data_path() -> String {
 
 fn default_v2_video_path() -> String {
     "videos/{video_key}/episode_{episode_index:06d}.mp4".to_string()
+}
+
+/// Deserialize video_path as String, treating JSON null as the default value.
+fn deserialize_video_path<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::<String>::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_else(default_v2_video_path))
 }
 
 /// Specification for a single dataset feature in v2 format.
@@ -149,6 +158,7 @@ impl V2InfoJson {
     pub fn resolve_data_path(&self, chunk_index: usize, episode_index: usize) -> String {
         self.data_path
             .replace("{chunk_index:03d}", &format!("{chunk_index:03}"))
+            .replace("{episode_chunk:03d}", &format!("{chunk_index:03}"))
             .replace("{episode_index:06d}", &format!("{episode_index:06}"))
             // Also handle v3-style {file_index:03d} in case data_path uses it
             .replace("{file_index:03d}", &format!("{episode_index:03}"))
@@ -158,10 +168,12 @@ impl V2InfoJson {
     ///
     /// v2 uses per-episode video files: `{episode_index:06d}` substitution.
     pub fn resolve_video_path(&self, video_key: &str, episode_index: usize) -> String {
+        let chunk_index = episode_index / self.chunks_size;
         self.video_path
             .replace("{video_key}", video_key)
             .replace("{episode_index:06d}", &format!("{episode_index:06}"))
-            .replace("{chunk_index:03d}", &format!("{:03}", episode_index / self.chunks_size))
+            .replace("{chunk_index:03d}", &format!("{chunk_index:03}"))
+            .replace("{episode_chunk:03d}", &format!("{chunk_index:03}"))
     }
 
     /// Determine which chunk an episode belongs to.
@@ -503,6 +515,36 @@ mod tests {
         assert_eq!(
             info.extra.get("numeric_extra"),
             Some(&serde_json::json!(42))
+        );
+    }
+
+    #[test]
+    fn read_v2_info_handles_null_video_path() {
+        let tmp = TempDir::new().unwrap();
+        let mut info_val = make_v2_info();
+        info_val["video_path"] = serde_json::json!(null);
+        write_info_json(tmp.path(), &info_val);
+
+        let info = read_v2_info(tmp.path()).unwrap();
+        // null video_path should fall back to the default template
+        assert_eq!(
+            info.video_path,
+            "videos/{video_key}/episode_{episode_index:06d}.mp4"
+        );
+    }
+
+    #[test]
+    fn read_v2_info_handles_missing_video_path() {
+        let tmp = TempDir::new().unwrap();
+        let mut info_val = make_v2_info();
+        info_val.as_object_mut().unwrap().remove("video_path");
+        write_info_json(tmp.path(), &info_val);
+
+        let info = read_v2_info(tmp.path()).unwrap();
+        // missing video_path should use the default template
+        assert_eq!(
+            info.video_path,
+            "videos/{video_key}/episode_{episode_index:06d}.mp4"
         );
     }
 }

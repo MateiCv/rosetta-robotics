@@ -130,6 +130,22 @@ pub fn read_robomimic_demo(file: &hdf5::File, demo_key: &str) -> ForgeResult<Epi
     let action_data = Arc::new(action_data);
     let obs_data = Arc::new(obs_data);
 
+    // Collect all state keys in sorted order for concatenation
+    let mut state_keys: Vec<&String> = obs_data
+        .keys()
+        .filter(|k| is_state_key(k))
+        .collect();
+    state_keys.sort();
+
+    // Compute total concatenated state dimension
+    let total_state_dim: usize = state_keys
+        .iter()
+        .filter_map(|k| match &obs_data[*k] {
+            ObsData::Array { dim, .. } => Some(*dim),
+            _ => None,
+        })
+        .sum();
+
     for t in 0..num_frames {
         let mut frame = Frame::new(t);
 
@@ -144,22 +160,42 @@ pub fn read_robomimic_demo(file: &hdf5::File, demo_key: &str) -> ForgeResult<Epi
         ));
 
         // Set observations (state, images, metadata)
-        for (key, obs) in obs_data.iter() {
+        // Sort keys for deterministic iteration (HashMap order is arbitrary).
+        let mut obs_keys: Vec<&String> = obs_data.keys().collect();
+        obs_keys.sort();
+
+        // Concatenate all state keys into a single state vector
+        if total_state_dim > 0 {
+            let mut concat_state = Vec::with_capacity(total_state_dim);
+            for key in &state_keys {
+                if let ObsData::Array { data, dim } = &obs_data[*key] {
+                    let start = t * dim;
+                    let end = start + dim;
+                    if end <= data.len() {
+                        concat_state.extend_from_slice(&data[start..end]);
+                    }
+                }
+            }
+            if !concat_state.is_empty() {
+                frame.state = Some(LazyArray::from_vec(
+                    concat_state,
+                    vec![total_state_dim],
+                    Dtype::Float64,
+                ));
+            }
+        }
+
+        for key in &obs_keys {
+            let obs = &obs_data[*key];
             match obs {
                 ObsData::Array { data, dim } => {
                     let start = t * dim;
                     let end = start + dim;
                     if end <= data.len() {
-                        let slice: Vec<f64> = data[start..end].to_vec();
-
-                        // Known state keys go to frame.state
-                        if is_state_key(key) && frame.state.is_none() {
-                            frame.state =
-                                Some(LazyArray::from_vec(slice, vec![*dim], Dtype::Float64));
-                        } else {
-                            // Store as metadata
+                        // State keys already handled above via concatenation
+                        if !is_state_key(key) {
                             frame.metadata.insert(
-                                key.clone(),
+                                (*key).clone(),
                                 serde_json::json!(data[start..end].to_vec()),
                             );
                         }
@@ -179,7 +215,7 @@ pub fn read_robomimic_demo(file: &hdf5::File, demo_key: &str) -> ForgeResult<Epi
                         let c = *channels;
                         let enc = *encoding;
                         frame.images.insert(
-                            key.clone(),
+                            (*key).clone(),
                             LazyImage::from_bytes(img_bytes, h, w, c, enc),
                         );
                     }
@@ -200,8 +236,37 @@ pub fn read_robomimic_demo(file: &hdf5::File, demo_key: &str) -> ForgeResult<Epi
 pub fn read_aloha_episode(file: &hdf5::File, episode_id: &str) -> ForgeResult<Episode> {
     let mut episode = Episode::new(episode_id.to_string());
 
-    // Read /action dataset
-    let (num_frames, action_data, action_dim) = read_root_action(file)?;
+    // Read /action dataset (optional — some datasets don't have actions)
+    let action_result = read_root_action(file).ok();
+    let (action_num_frames, action_data, action_dim) = match &action_result {
+        Some((nf, data, dim)) => (Some(*nf), Some(data.as_slice()), *dim),
+        None => (None, None, 0),
+    };
+
+    // Determine num_frames: prefer action, fall back to observations
+    let num_frames = if let Some(nf) = action_num_frames {
+        nf
+    } else {
+        // Try to infer from observations or file attributes
+        let attrs = read_group_attrs_from_file(file);
+        attrs
+            .get("frame_count")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize)
+            .or_else(|| {
+                // Try to get frame count from first observation dataset
+                file.group("observations")
+                    .ok()
+                    .and_then(|g| {
+                        g.member_names().ok().and_then(|names| {
+                            names.iter().find_map(|name| {
+                                g.dataset(name).ok().map(|ds| ds.shape()[0])
+                            })
+                        })
+                    })
+            })
+            .unwrap_or(0)
+    };
 
     // Read /observations group
     let obs_data = read_aloha_observations(file, num_frames)?;
@@ -209,39 +274,77 @@ pub fn read_aloha_episode(file: &hdf5::File, episode_id: &str) -> ForgeResult<Ep
     // Read file-level attributes as metadata
     episode.metadata = read_group_attrs_from_file(file);
 
-    let action_data = Arc::new(action_data);
     let obs_data = Arc::new(obs_data);
+
+    // Collect all state keys in sorted order for concatenation
+    let mut state_keys: Vec<&String> = obs_data
+        .keys()
+        .filter(|k| is_state_key(k))
+        .collect();
+    state_keys.sort();
+
+    // Compute total concatenated state dimension
+    let total_state_dim: usize = state_keys
+        .iter()
+        .filter_map(|k| match &obs_data[*k] {
+            ObsData::Array { dim, .. } => Some(*dim),
+            _ => None,
+        })
+        .sum();
 
     for t in 0..num_frames {
         let mut frame = Frame::new(t);
 
-        // Set action
-        let action_start = t * action_dim;
-        let action_end = action_start + action_dim;
-        if action_end <= action_data.len() {
-            let action_slice: Vec<f64> = action_data[action_start..action_end].to_vec();
-            frame.action = Some(LazyArray::from_vec(
-                action_slice,
-                vec![action_dim],
-                Dtype::Float64,
-            ));
+        // Set action (if available)
+        if let Some(action_data) = action_data {
+            let action_start = t * action_dim;
+            let action_end = action_start + action_dim;
+            if action_end <= action_data.len() {
+                let action_slice: Vec<f64> = action_data[action_start..action_end].to_vec();
+                frame.action = Some(LazyArray::from_vec(
+                    action_slice,
+                    vec![action_dim],
+                    Dtype::Float64,
+                ));
+            }
         }
 
-        // Set observations
-        for (key, obs) in obs_data.iter() {
+        // Concatenate all state keys into a single state vector
+        if total_state_dim > 0 {
+            let mut concat_state = Vec::with_capacity(total_state_dim);
+            for key in &state_keys {
+                if let ObsData::Array { data, dim } = &obs_data[*key] {
+                    let start = t * dim;
+                    let end = start + dim;
+                    if end <= data.len() {
+                        concat_state.extend_from_slice(&data[start..end]);
+                    }
+                }
+            }
+            if !concat_state.is_empty() {
+                frame.state = Some(LazyArray::from_vec(
+                    concat_state,
+                    vec![total_state_dim],
+                    Dtype::Float64,
+                ));
+            }
+        }
+
+        // Set observations — sort keys for deterministic iteration.
+        let mut obs_keys: Vec<&String> = obs_data.keys().collect();
+        obs_keys.sort();
+
+        for key in &obs_keys {
+            let obs = &obs_data[*key];
             match obs {
                 ObsData::Array { data, dim } => {
                     let start = t * dim;
                     let end = start + dim;
                     if end <= data.len() {
-                        let slice: Vec<f64> = data[start..end].to_vec();
-
-                        if is_state_key(key) && frame.state.is_none() {
-                            frame.state =
-                                Some(LazyArray::from_vec(slice, vec![*dim], Dtype::Float64));
-                        } else {
+                        // State keys already handled above via concatenation
+                        if !is_state_key(key) {
                             frame.metadata.insert(
-                                key.clone(),
+                                (*key).clone(),
                                 serde_json::json!(data[start..end].to_vec()),
                             );
                         }
@@ -261,7 +364,7 @@ pub fn read_aloha_episode(file: &hdf5::File, episode_id: &str) -> ForgeResult<Ep
                         let c = *channels;
                         let enc = *encoding;
                         frame.images.insert(
-                            key.clone(),
+                            (*key).clone(),
                             LazyImage::from_bytes(img_bytes, h, w, c, enc),
                         );
                     }
@@ -295,15 +398,20 @@ pub(crate) enum ObsData {
 }
 
 /// Check if an observation key is a known state key.
+///
+/// For robomimic datasets, Python only maps `robot0_joint_pos` and
+/// `robot0_eef_pos` to the state vector.  For ALOHA-style datasets the
+/// canonical keys are `qpos` / `qvel`.  We keep the list minimal to match
+/// the Python reference implementation.
 fn is_state_key(key: &str) -> bool {
     matches!(
         key,
-        "qpos"
+        "state"
+            | "qpos"
             | "qvel"
             | "robot0_joint_pos"
             | "robot0_eef_pos"
-            | "robot0_eef_quat"
-            | "robot0_gripper_qpos"
+            | "joint_pos"
             | "joint_positions"
             | "joint_velocities"
     )
@@ -357,7 +465,9 @@ pub(crate) fn find_first_hdf5_file(dir: &Path) -> ForgeResult<std::path::PathBuf
     })
 }
 
-/// Find all .hdf5/.h5 files in a directory, sorted by name.
+/// Find all .hdf5/.h5 files in a directory, sorted numerically by embedded
+/// episode number (e.g. `episode_2.hdf5` before `episode_10.hdf5`).
+/// Falls back to lexicographic sort when no number is found.
 pub(crate) fn find_hdf5_files(dir: &Path) -> ForgeResult<Vec<std::path::PathBuf>> {
     let mut files: Vec<_> = std::fs::read_dir(dir)
         .map_err(ForgeError::Io)?
@@ -373,8 +483,29 @@ pub(crate) fn find_hdf5_files(dir: &Path) -> ForgeResult<Vec<std::path::PathBuf>
         .map(|e| e.path())
         .collect();
 
-    files.sort();
+    // Sort numerically by the first number found in the filename stem,
+    // falling back to lexicographic order when no number is present.
+    files.sort_by(|a, b| {
+        let num_a = extract_number_from_stem(a);
+        let num_b = extract_number_from_stem(b);
+        match (num_a, num_b) {
+            (Some(na), Some(nb)) => na.cmp(&nb),
+            _ => a.cmp(b),
+        }
+    });
     Ok(files)
+}
+
+/// Extract the first numeric substring from a path's file stem.
+fn extract_number_from_stem(path: &Path) -> Option<u64> {
+    let stem = path.file_stem()?.to_str()?;
+    // Find the first run of digits in the stem
+    let start = stem.find(|c: char| c.is_ascii_digit())?;
+    let end = stem[start..]
+        .find(|c: char| !c.is_ascii_digit())
+        .map(|i| start + i)
+        .unwrap_or(stem.len());
+    stem[start..end].parse().ok()
 }
 
 /// Read the /data/{demo_key}/actions dataset, returning (num_frames, flat_data, action_dim).
@@ -530,6 +661,16 @@ fn read_single_obs_dataset(
 
 /// Check if a dataset looks like image data.
 fn is_image_dataset(name: &str, shape: &[usize], dtype: &TypeDescriptor) -> bool {
+    // Exclude known non-image keys (depth maps, etc.)
+    if name.contains("depth") {
+        return false;
+    }
+
+    // Float data is never raw image data (depth maps, embeddings, etc.)
+    if matches!(dtype, TypeDescriptor::Float(_)) {
+        return false;
+    }
+
     // Known image key names
     let image_names = [
         "agentview_image",
@@ -628,7 +769,7 @@ fn read_dataset_as_f64(ds: &hdf5::Dataset) -> ForgeResult<Vec<f64>> {
 }
 
 /// Read all HDF5 attributes from a group as a metadata HashMap.
-fn read_group_attrs(group: &hdf5::Group) -> HashMap<String, serde_json::Value> {
+pub(crate) fn read_group_attrs(group: &hdf5::Group) -> HashMap<String, serde_json::Value> {
     let mut metadata = HashMap::new();
     let attr_names = group.attr_names().unwrap_or_default();
 

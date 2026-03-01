@@ -218,13 +218,74 @@ fn inspect_robomimic(path: &Path) -> ForgeResult<DatasetInfo> {
         metadata.insert("env_name".to_string(), env_name.clone());
     }
 
+    // Extract FPS and robot_type from env_args (robomimic stores these in /data group attrs)
+    let mut fps = file_attrs.get("fps").and_then(|v| v.as_f64());
+    let mut robot_type: Option<String> = None;
+
+    // Read /data group attributes for env_args
+    if let Ok(data_group) = file.group("data") {
+        let data_attrs = super::layout::read_group_attrs(&data_group);
+        if let Some(env_args_val) = data_attrs.get("env_args") {
+            metadata.insert("env_args".to_string(), env_args_val.clone());
+            // Parse env_args JSON string to extract control_freq and robots
+            if let Some(env_args_str) = env_args_val.as_str() {
+                if let Ok(env_args) = serde_json::from_str::<serde_json::Value>(env_args_str) {
+                    // Extract FPS from env_kwargs.control_freq
+                    if fps.is_none() {
+                        fps = env_args
+                            .get("env_kwargs")
+                            .and_then(|kw| kw.get("control_freq"))
+                            .and_then(|v| v.as_f64());
+                    }
+                    // Extract robot_type from env_kwargs.robots[0]
+                    if let Some(robots) = env_args
+                        .get("env_kwargs")
+                        .and_then(|kw| kw.get("robots"))
+                    {
+                        if let Some(arr) = robots.as_array() {
+                            if let Some(first) = arr.first().and_then(|v| v.as_str()) {
+                                robot_type = Some(first.to_string());
+                            }
+                        } else if let Some(s) = robots.as_str() {
+                            robot_type = Some(s.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Infer robot_type from model_file if not found in env_args
+    if robot_type.is_none() {
+        // Check demo-level attrs for model_file containing robot mesh paths
+        if let Some(first_key) = demo_keys.first() {
+            if let Ok(demo_group) = file.group(&format!("data/{first_key}")) {
+                let demo_attrs = super::layout::read_group_attrs(&demo_group);
+                if let Some(model_val) = demo_attrs.get("model_file") {
+                    if let Some(model_str) = model_val.as_str() {
+                        let model_lower = model_str.to_lowercase();
+                        for name in &["panda", "sawyer", "ur5", "iiwa", "jaco", "kinova", "franka"] {
+                            if model_lower.contains(name) {
+                                // Capitalize first letter
+                                let mut chars = name.chars();
+                                let capitalized: String = chars.next().unwrap().to_uppercase().collect::<String>() + chars.as_str();
+                                robot_type = Some(capitalized);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     Ok(DatasetInfo {
         format: "hdf5".to_string(),
         path: path.to_path_buf(),
         total_episodes: demo_keys.len(),
         total_frames: estimated_total_frames,
-        fps: None,
-        robot_type: None,
+        fps,
+        robot_type,
         fields,
         cameras,
         metadata,
@@ -307,12 +368,16 @@ fn inspect_aloha(path: &Path) -> ForgeResult<DatasetInfo> {
         );
     }
 
+    // Extract FPS from file attributes.
+    let file_attrs = super::layout::read_group_attrs_from_file(&file);
+    let fps = file_attrs.get("fps").and_then(|v| v.as_f64());
+
     Ok(DatasetInfo {
         format: "hdf5".to_string(),
         path: path.to_path_buf(),
         total_episodes,
         total_frames: estimated_total_frames,
-        fps: None,
+        fps,
         robot_type: None,
         fields,
         cameras,
