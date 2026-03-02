@@ -726,11 +726,11 @@ mod tests {
         // Verify image dimensions match for all frames.
         for (orig_frame, read_frame) in original_episode.frames.iter().zip(read_episode.frames.iter()) {
             if let Some(orig_img) = orig_frame.images.get("top") {
-                // Reader sanitizes topic names: /camera/top/image_raw -> camera_top_image_raw
+                // Reader extracts camera name: /camera/top/image_raw -> top
                 let read_img = read_frame
                     .images
-                    .get("camera_top_image_raw")
-                    .expect("Should have image with sanitized topic name");
+                    .get("top")
+                    .expect("Should have image with extracted camera name");
 
                 assert_eq!(orig_img.height, read_img.height, "Image height should match");
                 assert_eq!(orig_img.width, read_img.width, "Image width should match");
