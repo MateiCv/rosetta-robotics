@@ -16,4 +16,8 @@ pub mod writer;
 pub use reader::{RosbagDetector, RosbagReader};
 pub use ros1::read_ros1_bag;
 pub use ros2::read_ros2_mcap;
+pub use ros2::{
+    parse_cdr_compressed_image, parse_cdr_float64_multi_array, parse_cdr_image,
+    parse_cdr_joint_state, parse_cdr_pose_stamped, parse_cdr_twist, JointStateResult,
+};
 pub use writer::RosbagWriter;

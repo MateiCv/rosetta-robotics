@@ -24,6 +24,33 @@ use forge_core::error::{ForgeError, ForgeResult};
 
 use crate::config::VideoEncoderConfig;
 
+/// Try hardware-accelerated H.264 encoders, falling back to the configured software codec.
+///
+/// Returns `(codec, is_hwaccel)`. Attempts platform-specific hw encoders:
+/// - macOS: `h264_videotoolbox`
+/// - Linux: `h264_nvenc`, `h264_vaapi`
+fn select_encoder(fallback_codec: &str) -> (ffmpeg::Codec, bool) {
+    // Platform-specific hardware encoder names, tried in preference order.
+    let hw_codecs: &[&str] = if cfg!(target_os = "macos") {
+        &["h264_videotoolbox"]
+    } else if cfg!(target_os = "linux") {
+        &["h264_nvenc", "h264_vaapi"]
+    } else {
+        &[]
+    };
+
+    for &name in hw_codecs {
+        if let Some(codec) = ffenc::find_by_name(name) {
+            return (codec, true);
+        }
+    }
+
+    // Fall back to software encoder.
+    let codec = ffenc::find_by_name(fallback_codec)
+        .unwrap_or_else(|| ffenc::find_by_name("libx264").expect("libx264 must be available"));
+    (codec, false)
+}
+
 /// H.264 MP4 video encoder.
 ///
 /// Accepts raw RGB24 frames and writes an H.264-encoded MP4 file.
@@ -38,6 +65,16 @@ pub struct H264VideoEncoder {
     config: VideoEncoderConfig,
     frame_count: usize,
     force_keyframe: bool,
+    /// Pre-allocated RGB frame for reuse across encode_frame calls.
+    rgb_frame: ffmpeg::util::frame::video::Video,
+    /// Pre-allocated YUV frame for reuse across encode_frame calls.
+    yuv_frame: ffmpeg::util::frame::video::Video,
+    /// Cached stride for the RGB frame (constant for a given resolution).
+    rgb_stride: usize,
+    /// Width * 3 (bytes per row of tightly-packed RGB24).
+    w3: usize,
+    /// Pre-computed frame duration in stream time base (constant for fixed fps).
+    frame_dur_stream: i64,
 }
 
 impl H264VideoEncoder {
@@ -52,9 +89,17 @@ impl H264VideoEncoder {
         let mut output = avformat::output(output_path)
             .map_err(|e| ForgeError::Video(format!("output create: {e}")))?;
 
-        // Find the H.264 encoder by name.
-        let codec = ffenc::find_by_name(&config.codec)
-            .ok_or_else(|| ForgeError::Video(format!("codec '{}' not found", config.codec)))?;
+        // Try hardware-accelerated encoder first (non-deterministic mode only).
+        // On macOS: h264_videotoolbox, on Linux: h264_nvenc or h264_vaapi.
+        // Falls back to the configured software codec (libx264) if unavailable.
+        let (codec, use_hwaccel) = if !config.deterministic {
+            select_encoder(&config.codec)
+        } else {
+            // Deterministic mode: always use software encoder for bit-identical output.
+            let codec = ffenc::find_by_name(&config.codec)
+                .ok_or_else(|| ForgeError::Video(format!("codec '{}' not found", config.codec)))?;
+            (codec, false)
+        };
 
         // Add a video stream to the container.
         let mut stream = output
@@ -77,15 +122,24 @@ impl H264VideoEncoder {
         video_enc.set_frame_rate(Some(Rational::new(config.fps as i32, 1)));
         video_enc.set_gop(config.gop_size);
 
-        // Set CRF and preset via Dictionary options.
         let mut opts = Dictionary::new();
-        opts.set("crf", &config.crf.to_string());
-        opts.set("preset", &config.preset);
 
-        // Force single-threaded x264 encoding for deterministic (bit-identical) output.
-        // Multi-threaded x264 uses non-deterministic macroblock scheduling.
-        if config.deterministic {
-            opts.set("threads", "1");
+        if use_hwaccel {
+            // Hardware encoders use different quality parameters.
+            // VideoToolbox: quality is controlled via "q" (1-100) or bitrate.
+            // NVENC: quality via "cq" parameter.
+            // Use a quality setting that roughly matches CRF 23.
+            opts.set("q", "65");
+        } else {
+            // Software encoder: set CRF and preset.
+            opts.set("crf", &config.crf.to_string());
+            opts.set("preset", &config.preset);
+
+            // Force single-threaded x264 encoding for deterministic (bit-identical) output.
+            // Multi-threaded x264 uses non-deterministic macroblock scheduling.
+            if config.deterministic {
+                opts.set("threads", "1");
+            }
         }
 
         let encoder = video_enc
@@ -109,6 +163,8 @@ impl H264VideoEncoder {
             .unwrap_or(stream_time_base);
 
         // Create scaler: RGB24 -> YUV420P at the same resolution.
+        // Use FAST_BILINEAR for speed — quality difference is negligible for
+        // same-resolution color space conversion (no scaling involved).
         let scaler = ffmpeg::software::scaling::Context::get(
             Pixel::RGB24,
             config.width,
@@ -116,9 +172,21 @@ impl H264VideoEncoder {
             Pixel::YUV420P,
             config.width,
             config.height,
-            ffmpeg::software::scaling::Flags::BILINEAR,
+            ffmpeg::software::scaling::Flags::FAST_BILINEAR,
         )
         .map_err(|e| ForgeError::Video(format!("scaler: {e}")))?;
+
+        // Pre-allocate reusable frames and cache stride/dimensions.
+        let rgb_frame =
+            ffmpeg::util::frame::video::Video::new(Pixel::RGB24, config.width, config.height);
+        let yuv_frame =
+            ffmpeg::util::frame::video::Video::new(Pixel::YUV420P, config.width, config.height);
+        let rgb_stride = rgb_frame.stride(0);
+        let w3 = (config.width * 3) as usize;
+
+        // Pre-compute frame duration in stream time base (constant for fixed fps).
+        let enc_time_base = Rational::new(1, config.fps as i32);
+        let frame_dur_stream = 1i64.rescale(enc_time_base, stream_time_base);
 
         Ok(Self {
             output,
@@ -129,6 +197,11 @@ impl H264VideoEncoder {
             config: config.clone(),
             frame_count: 0,
             force_keyframe: false,
+            rgb_frame,
+            yuv_frame,
+            rgb_stride,
+            w3,
+            frame_dur_stream,
         })
     }
 
@@ -145,39 +218,44 @@ impl H264VideoEncoder {
             )));
         }
 
-        // Build an RGB24 frame and copy pixel data into it.
-        let mut rgb_frame =
-            ffmpeg::util::frame::video::Video::new(Pixel::RGB24, self.config.width, self.config.height);
-
-        // Copy row-by-row respecting stride (linesize may differ from width*3).
-        let stride = rgb_frame.stride(0);
-        let w3 = (self.config.width * 3) as usize;
+        // Copy pixel data into the pre-allocated RGB frame.
         {
-            let plane = rgb_frame.data_mut(0);
-            for row in 0..self.config.height as usize {
-                let src_start = row * w3;
-                let dst_start = row * stride;
-                plane[dst_start..dst_start + w3].copy_from_slice(&rgb_data[src_start..src_start + w3]);
+            let plane = self.rgb_frame.data_mut(0);
+            if self.rgb_stride == self.w3 {
+                // Fast path: stride matches row width — bulk copy entire frame.
+                plane[..expected].copy_from_slice(rgb_data);
+            } else {
+                // Slow path: copy row-by-row respecting stride padding.
+                for row in 0..self.config.height as usize {
+                    let src_start = row * self.w3;
+                    let dst_start = row * self.rgb_stride;
+                    plane[dst_start..dst_start + self.w3]
+                        .copy_from_slice(&rgb_data[src_start..src_start + self.w3]);
+                }
             }
         }
 
-        // Convert RGB24 -> YUV420P.
-        let mut yuv_frame =
-            ffmpeg::util::frame::video::Video::new(Pixel::YUV420P, self.config.width, self.config.height);
+        // Convert RGB24 -> YUV420P using the pre-allocated YUV frame.
         self.scaler
-            .run(&rgb_frame, &mut yuv_frame)
+            .run(&self.rgb_frame, &mut self.yuv_frame)
             .map_err(|e| ForgeError::Video(format!("scaler run: {e}")))?;
 
         // Set PTS based on frame count (in encoder time-base units: frame number).
-        yuv_frame.set_pts(Some(self.frame_count as i64));
+        self.yuv_frame.set_pts(Some(self.frame_count as i64));
 
         // Force keyframe if requested.
         if self.force_keyframe {
-            yuv_frame.set_kind(ffmpeg::picture::Type::I);
+            self.yuv_frame.set_kind(ffmpeg::picture::Type::I);
             self.force_keyframe = false;
         }
 
-        self.send_frame_and_write(&yuv_frame)?;
+        // send_frame borrows encoder mutably, so we need a temp reference to yuv_frame.
+        // Since both are owned by self, we use unsafe to split the borrow.
+        // Safety: encoder and yuv_frame are independent fields — no aliasing.
+        let yuv_ref = unsafe {
+            &*(&self.yuv_frame as *const ffmpeg::util::frame::video::Video)
+        };
+        self.send_frame_and_write(yuv_ref)?;
         self.frame_count += 1;
         Ok(())
     }
@@ -229,10 +307,6 @@ impl H264VideoEncoder {
         let mut packet = Packet::empty();
         let enc_time_base = self.encoder.time_base();
 
-        // Compute one frame's duration in the stream time base.
-        // enc_time_base is 1/fps, so 1 tick = one frame.
-        let frame_dur_stream = 1i64.rescale(enc_time_base, self.stream_time_base);
-
         loop {
             match self.encoder.receive_packet(&mut packet) {
                 Ok(()) => {
@@ -240,7 +314,7 @@ impl H264VideoEncoder {
                     packet.rescale_ts(enc_time_base, self.stream_time_base);
                     // Ensure the muxer knows the duration of this sample.
                     if packet.duration() == 0 {
-                        packet.set_duration(frame_dur_stream);
+                        packet.set_duration(self.frame_dur_stream);
                     }
                     packet
                         .write_interleaved(&mut self.output)

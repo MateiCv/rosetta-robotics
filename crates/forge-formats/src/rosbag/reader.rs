@@ -169,7 +169,7 @@ impl FormatReader for RosbagReader {
             RosBagSubFormat::Ros2Mcap => {
                 if path.is_dir() {
                     // Writer creates a directory of per-episode .mcap files.
-                    // Inspect the first one for schema, then count all files for episodes.
+                    // Inspect the first one for schema, then sum frames across all files.
                     let bag_files = collect_bag_files(path);
                     let first = bag_files.first().ok_or_else(|| {
                         forge_core::ForgeError::Inspection {
@@ -179,6 +179,17 @@ impl FormatReader for RosbagReader {
                     })?;
                     let mut info = self.inspect_ros2_mcap(first, &mut metadata)?;
                     info.total_episodes = bag_files.len();
+                    // Sum frame counts across all .mcap files instead of using first only.
+                    let mut total_frames = 0usize;
+                    for bag_file in &bag_files {
+                        if let Ok(data) = std::fs::read(bag_file) {
+                            let (_, frame_count) = infer_fps_from_mcap(&data);
+                            total_frames += frame_count;
+                        }
+                    }
+                    if total_frames > 0 {
+                        info.total_frames = total_frames;
+                    }
                     info.path = path.to_path_buf();
                     Ok(info)
                 } else {

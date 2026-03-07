@@ -269,23 +269,46 @@ fn try_parse_dataset_info_json(path: &Path) -> Option<DatasetInfo> {
         .to_string();
 
     // Parse splits: handle both array format (TFDS) and object format (our writer).
-    let total_episodes = parsed
+    // TFDS array format may use shardLengths (episode counts per shard) or
+    // numShards/numExamples. Our writer uses the object format with numShards/numExamples.
+    let (total_episodes, total_frames_from_json) = parsed
         .get("splits")
-        .and_then(|s| {
+        .map(|s| {
+            let extract = |split: &serde_json::Value| -> (usize, usize) {
+                // Check for shardLengths first (standard TFDS format).
+                // shardLengths values are *episode counts* per shard, so their
+                // sum is the total number of episodes. Total frames is unknown
+                // from metadata alone (would need reading all records).
+                if let Some(shard_lengths) = split.get("shardLengths").and_then(|v| v.as_array()) {
+                    let total_episodes: usize = shard_lengths
+                        .iter()
+                        .filter_map(|v| v.as_str().and_then(|s| s.parse::<usize>().ok())
+                            .or_else(|| v.as_u64().map(|n| n as usize)))
+                        .sum();
+                    // We don't know total_frames from metadata; use 0 as placeholder
+                    return (total_episodes, 0);
+                }
+                // Fallback: numShards / numExamples
+                let shards = split.get("numShards").and_then(|n| n.as_u64()).unwrap_or(0) as usize;
+                let examples = split.get("numExamples").and_then(|n| n.as_u64()).unwrap_or(0) as usize;
+                (shards, examples)
+            };
             // Try array format first (standard TFDS).
             if let Some(arr) = s.as_array() {
                 arr.iter()
                     .find(|item| item.get("name").and_then(|n| n.as_str()) == Some("train"))
-                    .and_then(|item| item.get("numShards").and_then(|n| n.as_u64()))
+                    .map(|item| extract(item))
+                    .unwrap_or((0, 0))
             } else if let Some(obj) = s.as_object() {
-                // Object format: { "train": { "numShards": N } }
+                // Object format: { "train": { "numShards": N, "numExamples": M } }
                 obj.get("train")
-                    .and_then(|t| t.get("numShards").and_then(|n| n.as_u64()))
+                    .map(|t| extract(t))
+                    .unwrap_or((0, 0))
             } else {
-                None
+                (0, 0)
             }
         })
-        .unwrap_or(0) as usize;
+        .unwrap_or((0, 0));
 
     // Extract FPS if present.
     let fps = parsed.get("fps").and_then(|v| v.as_f64());
@@ -311,7 +334,7 @@ fn try_parse_dataset_info_json(path: &Path) -> Option<DatasetInfo> {
         format: "rlds".to_string(),
         path: path.to_path_buf(),
         total_episodes,
-        total_frames: 0,
+        total_frames: total_frames_from_json,
         fps,
         robot_type: None,
         fields,
@@ -496,6 +519,11 @@ fn infer_schema_from_features(
 // ---------------------------------------------------------------------------
 
 /// Read all steps (decoded Examples) from a single TFRecord shard file.
+///
+/// Handles both per-step format (one TFRecord per step with flat keys like
+/// `action`, `is_first`) and per-episode format (one TFRecord per episode
+/// with `steps/`-prefixed concatenated arrays like `steps/action`,
+/// `steps/is_first`). The per-episode format is standard RLDS/TFDS.
 fn read_shard_steps(
     shard_path: &Path,
 ) -> ForgeResult<Vec<HashMap<String, FeatureValue>>> {
@@ -505,10 +533,105 @@ fn read_shard_steps(
     for record_result in iter {
         let raw_bytes = record_result?;
         let features = decode_example(&raw_bytes)?;
-        steps.push(features);
+
+        // Detect per-episode format: keys start with "steps/"
+        if is_per_episode_format(&features) {
+            let expanded = expand_episode_record(features)?;
+            steps.extend(expanded);
+        } else {
+            steps.push(features);
+        }
     }
 
     Ok(steps)
+}
+
+/// Check if a decoded Example uses per-episode format (steps/-prefixed keys).
+fn is_per_episode_format(features: &HashMap<String, FeatureValue>) -> bool {
+    features.keys().any(|k| k.starts_with("steps/"))
+}
+
+/// Expand a per-episode TFRecord Example into individual per-step feature maps.
+///
+/// Standard RLDS format stores one Example per episode with concatenated arrays:
+///   steps/action: float_list [f0_a0, f0_a1, ..., f1_a0, f1_a1, ...]
+///   steps/is_first: int64_list [1, 0, 0, ...]
+///   steps/observation/image: bytes_list [img0, img1, ...]
+///
+/// This function splits them back into per-step maps with flat keys:
+///   action: float_list [a0, a1, ...]
+///   is_first: int64_list [1]
+fn expand_episode_record(
+    features: HashMap<String, FeatureValue>,
+) -> ForgeResult<Vec<HashMap<String, FeatureValue>>> {
+    // Determine number of steps from steps/is_first (or steps/is_last).
+    let num_steps = features
+        .get("steps/is_first")
+        .or_else(|| features.get("steps/is_last"))
+        .map(|v| match v {
+            FeatureValue::Int64(vals) => vals.len(),
+            FeatureValue::Float(vals) => vals.len(),
+            FeatureValue::Bytes(vals) => vals.len(),
+        })
+        .unwrap_or(0);
+
+    if num_steps == 0 {
+        return Ok(Vec::new());
+    }
+
+    // Initialize per-step maps.
+    let mut step_maps: Vec<HashMap<String, FeatureValue>> =
+        (0..num_steps).map(|_| HashMap::new()).collect();
+
+    for (key, value) in features {
+        // Skip non-steps keys (e.g. episode_metadata/*).
+        let stripped = match key.strip_prefix("steps/") {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+
+        match value {
+            FeatureValue::Float(vals) => {
+                // Determine per-step dimension: total / num_steps.
+                let per_step = vals.len() / num_steps;
+                if per_step == 0 || vals.len() != per_step * num_steps {
+                    // Cannot evenly split; store entire array in first step.
+                    step_maps[0].insert(stripped, FeatureValue::Float(vals));
+                    continue;
+                }
+                for (i, chunk) in vals.chunks(per_step).enumerate() {
+                    if i < num_steps {
+                        step_maps[i].insert(stripped.clone(), FeatureValue::Float(chunk.to_vec()));
+                    }
+                }
+            }
+            FeatureValue::Int64(vals) => {
+                let per_step = vals.len() / num_steps;
+                if per_step == 0 || vals.len() != per_step * num_steps {
+                    step_maps[0].insert(stripped, FeatureValue::Int64(vals));
+                    continue;
+                }
+                for (i, chunk) in vals.chunks(per_step).enumerate() {
+                    if i < num_steps {
+                        step_maps[i].insert(stripped.clone(), FeatureValue::Int64(chunk.to_vec()));
+                    }
+                }
+            }
+            FeatureValue::Bytes(vals) => {
+                // For bytes (images, strings), each entry = one step.
+                if vals.len() == num_steps {
+                    for (i, val) in vals.into_iter().enumerate() {
+                        step_maps[i].insert(stripped.clone(), FeatureValue::Bytes(vec![val]));
+                    }
+                } else if !vals.is_empty() {
+                    // Cannot split evenly; store in first step.
+                    step_maps[0].insert(stripped, FeatureValue::Bytes(vals));
+                }
+            }
+        }
+    }
+
+    Ok(step_maps)
 }
 
 // ---------------------------------------------------------------------------
@@ -679,14 +802,15 @@ fn classify_feature(name: &str, value: &FeatureValue) -> FeatureClass {
         return FeatureClass::Action;
     }
 
-    // State/observation features.
+    // State/observation features — only specific known state keys.
+    // Generic observation/* keys (e.g. observation/pose_r, observation/action_l)
+    // are left as metadata to avoid shape conflicts when multiple observation
+    // features exist with different dimensions.
     if stripped == "observation.state"
         || stripped == "observation/state"
         || stripped == "state"
         || stripped == "observation.joint_positions"
         || stripped == "observation/joint_positions"
-        || stripped.starts_with("observation/") && !stripped.contains("image")
-        || stripped.starts_with("observation.") && !stripped.contains("image")
     {
         return FeatureClass::State;
     }

@@ -1,0 +1,20 @@
+[package]
+name = "rosetta-quality"
+description = "Quality analysis metrics and episode filtering for robotics datasets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rosetta-core = { workspace = true }
+rosetta-formats = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml_ng = { workspace = true }
+thiserror = { workspace = true }
+pulp = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

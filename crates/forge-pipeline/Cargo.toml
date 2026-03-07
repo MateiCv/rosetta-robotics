@@ -23,3 +23,4 @@ arrow.workspace = true
 parquet.workspace = true
 forge-video.workspace = true
 forge-formats.workspace = true
+sha2.workspace = true

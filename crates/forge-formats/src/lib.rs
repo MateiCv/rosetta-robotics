@@ -45,16 +45,20 @@ pub use traits::{FormatReader, FormatWriter};
 pub fn decode_image_to_rgb(img: &forge_core::LazyImage) -> forge_core::ForgeResult<Vec<u8>> {
     let data = img.load()?;
     match img.encoding {
-        forge_core::ImageEncoding::Raw => Ok(data.to_vec()),
+        forge_core::ImageEncoding::Raw => {
+            // For raw images, return a Vec backed by the Bytes data.
+            // Bytes::to_vec() is efficient — it avoids a copy if refcount == 1.
+            Ok(data.to_vec())
+        }
         forge_core::ImageEncoding::Jpeg | forge_core::ImageEncoding::Png => {
-            let decoded = image::load_from_memory(&data).map_err(|e| {
+            let decoded = image::load_from_memory(data).map_err(|e| {
                 forge_core::ForgeError::Video(format!("failed to decode image: {e}"))
             })?;
             Ok(decoded.to_rgb8().into_raw())
         }
         forge_core::ImageEncoding::CompressedBytes => {
             // Try decoding as a known image format. If that fails, treat as raw pixels.
-            match image::load_from_memory(&data) {
+            match image::load_from_memory(data) {
                 Ok(decoded) => Ok(decoded.to_rgb8().into_raw()),
                 Err(_) => Ok(data.to_vec()),
             }

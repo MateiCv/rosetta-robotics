@@ -87,7 +87,16 @@ fn detect_compression(magic: &[u8; 2]) -> Compression {
     if magic[0] == 0x1f && magic[1] == 0x8b {
         Compression::Gzip
     } else if magic[0] == 0x78 {
-        Compression::Zlib
+        // ZLIB header: CMF (0x78 = deflate, 32K window) + FLG byte.
+        // The spec requires (CMF*256 + FLG) % 31 == 0.
+        // Without this check, uncompressed TFRecords whose first length byte
+        // happens to be 0x78 are misidentified as ZLIB.
+        let cmf_flg = (magic[0] as u16) * 256 + magic[1] as u16;
+        if cmf_flg % 31 == 0 {
+            Compression::Zlib
+        } else {
+            Compression::None
+        }
     } else {
         Compression::None
     }

@@ -1,0 +1,26 @@
+[package]
+name = "rosetta-pipeline"
+description = "Parallel conversion pipeline orchestrating format readers and writers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rosetta-core.workspace = true
+rosetta-formats.workspace = true
+rayon.workspace = true
+indicatif.workspace = true
+sysinfo.workspace = true
+crossbeam-channel.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+bytes.workspace = true
+arrow.workspace = true
+parquet.workspace = true
+rosetta-video.workspace = true
+rosetta-formats.workspace = true
+sha2.workspace = true

@@ -159,8 +159,10 @@ impl FormatWriter for ZarrWriter {
         }
 
         // Buffer image data.
-        for (cam_idx, (cam_name, h, w, c)) in self.cameras.clone().iter().enumerate() {
-            let pixels_per_frame = (*h as usize) * (*w as usize) * (*c as usize);
+        // Iterate by index to avoid cloning the cameras Vec.
+        for cam_idx in 0..self.cameras.len() {
+            let (ref cam_name, h, w, c) = self.cameras[cam_idx];
+            let pixels_per_frame = (h as usize) * (w as usize) * (c as usize);
             for frame in &episode.frames {
                 if let Some(img) = frame.images.get(cam_name) {
                     let raw = decode_image_to_raw(img)?;

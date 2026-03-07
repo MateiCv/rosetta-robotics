@@ -539,7 +539,7 @@ fn classify_ros2_schema(schema_name: &str) -> Ros2Role {
 ///
 /// Fields: header -> height(u32) -> width(u32) -> encoding(string) ->
 /// is_bigendian(u8) -> step(u32) -> data(sequence<u8>)
-fn parse_cdr_image(data: &[u8]) -> Option<(u32, u32, String, Vec<u8>)> {
+pub fn parse_cdr_image(data: &[u8]) -> Option<(u32, u32, String, Vec<u8>)> {
     let mut reader = CdrReader::new(data)?;
     reader.skip_header()?;
 
@@ -559,7 +559,7 @@ fn parse_cdr_image(data: &[u8]) -> Option<(u32, u32, String, Vec<u8>)> {
 /// Parse a CDR-encoded sensor_msgs/msg/CompressedImage.
 ///
 /// Fields: header -> format(string) -> data(sequence<u8>)
-fn parse_cdr_compressed_image(data: &[u8]) -> Option<(String, Vec<u8>)> {
+pub fn parse_cdr_compressed_image(data: &[u8]) -> Option<(String, Vec<u8>)> {
     let mut reader = CdrReader::new(data)?;
     reader.skip_header()?;
 
@@ -576,9 +576,9 @@ fn parse_cdr_compressed_image(data: &[u8]) -> Option<(String, Vec<u8>)> {
 ///
 /// Fields: header -> name(sequence<string>) -> position(sequence<float64>)
 ///         -> velocity(sequence<float64>) -> effort(sequence<float64>)
-type JointStateResult = (Vec<String>, Vec<f64>, Vec<f64>, Vec<f64>);
+pub type JointStateResult = (Vec<String>, Vec<f64>, Vec<f64>, Vec<f64>);
 
-fn parse_cdr_joint_state(data: &[u8]) -> Option<JointStateResult> {
+pub fn parse_cdr_joint_state(data: &[u8]) -> Option<JointStateResult> {
     let mut reader = CdrReader::new(data)?;
     reader.skip_header()?;
 
@@ -593,7 +593,7 @@ fn parse_cdr_joint_state(data: &[u8]) -> Option<JointStateResult> {
 /// Parse a CDR-encoded geometry_msgs/msg/PoseStamped.
 ///
 /// Fields: header -> pose (position.xyz + orientation.xyzw) = 7 f64
-fn parse_cdr_pose_stamped(data: &[u8]) -> Option<Vec<f64>> {
+pub fn parse_cdr_pose_stamped(data: &[u8]) -> Option<Vec<f64>> {
     let mut reader = CdrReader::new(data)?;
     reader.skip_header()?;
 
@@ -609,7 +609,7 @@ fn parse_cdr_pose_stamped(data: &[u8]) -> Option<Vec<f64>> {
 ///
 /// Fields: linear (xyz) + angular (xyz) = 6 x f64
 /// Note: Twist has no header.
-fn parse_cdr_twist(data: &[u8]) -> Option<Vec<f64>> {
+pub fn parse_cdr_twist(data: &[u8]) -> Option<Vec<f64>> {
     let mut reader = CdrReader::new(data)?;
 
     // Twist: Vector3 (3 x f64) + Vector3 (3 x f64)
@@ -625,7 +625,7 @@ fn parse_cdr_twist(data: &[u8]) -> Option<Vec<f64>> {
 /// Fields: layout(MultiArrayLayout) -> data(sequence<f64>)
 /// MultiArrayLayout: dim(sequence<MultiArrayDimension>) -> data_offset(u32)
 /// MultiArrayDimension: label(string) + size(u32) + stride(u32)
-fn parse_cdr_float64_multi_array(data: &[u8]) -> Option<Vec<f64>> {
+pub fn parse_cdr_float64_multi_array(data: &[u8]) -> Option<Vec<f64>> {
     let mut reader = CdrReader::new(data)?;
 
     // MultiArrayLayout.dim: sequence<MultiArrayDimension>

@@ -382,16 +382,11 @@ impl Converter {
         }
 
         for frame in &mut episode.frames {
-            let remaps: Vec<(String, String)> = config
-                .cameras
-                .iter()
-                .filter(|(src, _)| frame.images.contains_key(*src))
-                .map(|(src, dst)| (src.clone(), dst.clone()))
-                .collect();
-
-            for (src, dst) in remaps {
-                if let Some(image) = frame.images.remove(&src) {
-                    frame.images.insert(dst, image);
+            // Remap directly without collecting into intermediate Vec.
+            // Iterate config entries and remove+insert in place.
+            for (src, dst) in &config.cameras {
+                if let Some(image) = frame.images.remove(src.as_str()) {
+                    frame.images.insert(dst.clone(), image);
                 }
             }
         }

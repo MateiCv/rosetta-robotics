@@ -1520,3 +1520,18 @@ mod tests {
         assert_eq!(error_warnings.len(), 1);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Public fuzz wrappers
+// ---------------------------------------------------------------------------
+
+/// Fuzz wrapper for `read_vint`. Feeds arbitrary bytes to the EBML VINT parser.
+pub fn fuzz_read_vint(data: &[u8], keep_marker: bool) -> ForgeResult<Option<(u64, usize)>> {
+    read_vint(&mut std::io::Cursor::new(data), keep_marker)
+}
+
+/// Fuzz wrapper for `classify_element`. Returns debug representation of the
+/// classification result.
+pub fn fuzz_classify_element(data: &[u8]) -> String {
+    format!("{:?}", classify_element(data))
+}

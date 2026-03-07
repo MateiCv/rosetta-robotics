@@ -260,12 +260,23 @@ impl FormatWriter for RosbagWriter {
             std::fs::File::create(&mcap_path).map_err(ForgeError::Io)?;
         let buf_writer = BufWriter::new(file);
 
-        let mut writer = mcap::write::Writer::new(buf_writer).map_err(|e| {
-            ForgeError::Conversion {
-                source_format: "episode".to_string(),
-                target_format: "rosbag".to_string(),
-                reason: format!("MCAP writer creation failed: {e}"),
-            }
+        let mut writer = if self.deterministic {
+            // Deterministic mode: disable compression (multi-threaded Zstd is
+            // non-deterministic) and disable summary section (the mcap crate
+            // uses HashMap internally for schemas/channels, producing
+            // non-deterministic iteration order in the summary).
+            mcap::write::WriteOptions::new()
+                .compression(None)
+                .emit_summary_records(false)
+                .emit_summary_offsets(false)
+                .create(buf_writer)
+        } else {
+            mcap::write::Writer::new(buf_writer)
+        }
+        .map_err(|e| ForgeError::Conversion {
+            source_format: "episode".to_string(),
+            target_format: "rosbag".to_string(),
+            reason: format!("MCAP writer creation failed: {e}"),
         })?;
 
         // Discover data channels from the first frame.
@@ -752,6 +763,44 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn writer_deterministic_output() {
+        // Write the same episode twice and verify identical output.
+        let episode = make_test_episode(5);
+        let info = make_dataset_info();
+
+        let mut outputs = Vec::new();
+        for _ in 0..2 {
+            let tmp = TempDir::new().unwrap();
+            let output = tmp.path();
+
+            let mut writer = RosbagWriter::new();
+            writer.set_deterministic(true);
+            writer.write_episode(&episode, output, 0).unwrap();
+            writer.finalize(output, &info).unwrap();
+
+            let mcap_path = output.join("episode_000000.mcap");
+            outputs.push(std::fs::read(&mcap_path).unwrap());
+        }
+
+        if outputs[0] != outputs[1] {
+            let a = &outputs[0];
+            let b = &outputs[1];
+            eprintln!("MCAP files differ: {} vs {} bytes", a.len(), b.len());
+            let mut diffs = 0;
+            for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
+                if x != y {
+                    if diffs < 5 {
+                        eprintln!("  byte {i}: {x:02x} vs {y:02x}");
+                    }
+                    diffs += 1;
+                }
+            }
+            eprintln!("  total differing bytes: {diffs}");
+            panic!("MCAP output should be deterministic ({diffs} bytes differ)");
         }
     }
 }

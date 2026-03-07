@@ -203,9 +203,25 @@ fn inspect_robomimic(path: &Path) -> ForgeResult<DatasetInfo> {
         }
     }
 
-    // Estimate total frames from all demos (count demo keys)
-    // For a more accurate count, we'd need to open each demo -- use first demo * count
-    let estimated_total_frames = total_frames * demo_keys.len();
+    // Count total frames across all demos (not just the first one).
+    let mut estimated_total_frames = 0usize;
+    if let Ok(data_group) = file.group("data") {
+        for key in &demo_keys {
+            if let Ok(demo) = data_group.group(key) {
+                // Try reading the first array dataset to get its length.
+                if let Ok(actions) = demo.dataset("actions") {
+                    estimated_total_frames += actions.shape()[0];
+                } else {
+                    // Fallback: use the frame count from the first demo.
+                    estimated_total_frames += total_frames;
+                }
+            } else {
+                estimated_total_frames += total_frames;
+            }
+        }
+    } else {
+        estimated_total_frames = total_frames * demo_keys.len();
+    }
 
     metadata.insert("layout".to_string(), serde_json::json!("robomimic"));
     metadata.insert(
@@ -358,7 +374,22 @@ fn inspect_aloha(path: &Path) -> ForgeResult<DatasetInfo> {
     }
 
     let total_episodes = files.len();
-    let estimated_total_frames = total_frames * total_episodes;
+    // Count total frames across all files (not just first * count).
+    let mut estimated_total_frames = total_frames; // first file already counted
+    for f in files.iter().skip(1) {
+        if let Ok(fh) = open_hdf5(f) {
+            if let Ok(actions) = fh.dataset("action") {
+                estimated_total_frames += actions.shape()[0];
+            } else if let Ok(qpos) = fh.dataset("observations/qpos") {
+                estimated_total_frames += qpos.shape()[0];
+            } else {
+                // Fallback: assume same as first file
+                estimated_total_frames += total_frames;
+            }
+        } else {
+            estimated_total_frames += total_frames;
+        }
+    }
 
     metadata.insert("layout".to_string(), serde_json::json!("aloha"));
     if is_dir {

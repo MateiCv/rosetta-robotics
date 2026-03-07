@@ -379,8 +379,8 @@ fn cross_format_roundtrip(source_format: &str, target_format: &str) {
 
     assert_eq!(
         result_fwd.episodes_converted, num_episodes,
-        "[{pair}] forward: expected {num_episodes} episodes, got {} ({} failed)",
-        result_fwd.episodes_converted, result_fwd.episodes_failed
+        "[{pair}] forward: expected {num_episodes} episodes, got {} ({} failed)\nerrors: {:?}",
+        result_fwd.episodes_converted, result_fwd.episodes_failed, result_fwd.errors
     );
 
     // Step 2: Convert target -> source.
@@ -397,8 +397,8 @@ fn cross_format_roundtrip(source_format: &str, target_format: &str) {
 
     assert_eq!(
         result_back.episodes_converted, num_episodes,
-        "[{pair}] backward: expected {num_episodes} episodes, got {} ({} failed)",
-        result_back.episodes_converted, result_back.episodes_failed
+        "[{pair}] backward: expected {num_episodes} episodes, got {} ({} failed)\nerrors: {:?}",
+        result_back.episodes_converted, result_back.episodes_failed, result_back.errors
     );
 
     // Step 3: Read back and verify against original native data.

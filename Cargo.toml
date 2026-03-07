@@ -8,6 +8,7 @@ members = [
     "crates/forge-pipeline",
     "crates/forge-cli",
 ]
+exclude = ["crates2"]
 
 [workspace.package]
 version = "0.1.0"
@@ -56,3 +57,4 @@ sha2 = "0.10"
 ureq = { version = "2", features = ["json"] }
 ratatui = { version = "0.29", features = ["crossterm"] }
 crossterm = "0.28"
+proptest = "1"

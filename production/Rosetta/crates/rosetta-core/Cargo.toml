@@ -1,0 +1,15 @@
+[package]
+name = "rosetta-core"
+description = "Core data models and types for the Rosetta robotics dataset converter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+bytes.workspace = true

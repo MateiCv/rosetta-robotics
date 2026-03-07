@@ -17,23 +17,53 @@ use sysinfo::System;
 /// Registered as the `{mem}` key in the progress bar template. The indicatif
 /// steady tick (~200ms) controls refresh rate, which is acceptable overhead
 /// per research pitfall #5 (warns about per-frame, not per-tick refresh).
-#[derive(Clone)]
-struct MemoryTracker;
+/// Tracks system memory usage, caching the last reading to avoid
+/// creating a new `System` on every progress bar tick (~200ms).
+struct MemoryTracker {
+    cached_gb: std::sync::atomic::AtomicU32,
+}
+
+impl Clone for MemoryTracker {
+    fn clone(&self) -> Self {
+        Self {
+            cached_gb: std::sync::atomic::AtomicU32::new(
+                self.cached_gb.load(std::sync::atomic::Ordering::Relaxed),
+            ),
+        }
+    }
+}
+
+impl MemoryTracker {
+    fn new() -> Self {
+        let mut sys = System::new();
+        sys.refresh_memory();
+        let gb = sys.used_memory() as f32 / 1_073_741_824.0;
+        Self {
+            cached_gb: std::sync::atomic::AtomicU32::new(gb.to_bits()),
+        }
+    }
+}
 
 impl ProgressTracker for MemoryTracker {
     fn clone_box(&self) -> Box<dyn ProgressTracker> {
         Box::new(self.clone())
     }
 
-    fn tick(&mut self, _state: &ProgressState, _now: Instant) {}
+    fn tick(&mut self, _state: &ProgressState, _now: Instant) {
+        // Refresh memory reading on tick (called by indicatif's steady_tick).
+        let mut sys = System::new();
+        sys.refresh_memory();
+        let gb = sys.used_memory() as f32 / 1_073_741_824.0;
+        self.cached_gb
+            .store(gb.to_bits(), std::sync::atomic::Ordering::Relaxed);
+    }
 
     fn reset(&mut self, _state: &ProgressState, _now: Instant) {}
 
     fn write(&self, _state: &ProgressState, w: &mut dyn fmt::Write) {
-        let mut sys = System::new();
-        sys.refresh_memory();
-        let used_gb = sys.used_memory() as f64 / 1_073_741_824.0;
-        let _ = write!(w, "{used_gb:.1}GB");
+        let bits = self.cached_gb.load(std::sync::atomic::Ordering::Relaxed);
+        let gb = f32::from_bits(bits);
+        let _ = write!(w, "{gb:.1}GB");
     }
 }
 
@@ -73,7 +103,7 @@ impl ProgressReporter {
                      {per_sec} | ETA: {eta} | mem: {mem}",
                 )
                 .unwrap()
-                .with_key("mem", MemoryTracker)
+                .with_key("mem", MemoryTracker::new())
                 .progress_chars("=>-");
                 pb.set_style(style);
                 pb.enable_steady_tick(std::time::Duration::from_millis(200));

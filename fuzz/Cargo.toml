@@ -1,0 +1,59 @@
+[package]
+name = "forge-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.forge-formats]
+path = "../crates/forge-formats"
+
+[[bin]]
+name = "fuzz_cdr_image"
+path = "fuzz_targets/cdr_image.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_cdr_compressed_image"
+path = "fuzz_targets/cdr_compressed_image.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_cdr_joint_state"
+path = "fuzz_targets/cdr_joint_state.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_cdr_float64_array"
+path = "fuzz_targets/cdr_float64_array.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_cdr_pose_stamped"
+path = "fuzz_targets/cdr_pose_stamped.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_cdr_twist"
+path = "fuzz_targets/cdr_twist.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_ebml_vint"
+path = "fuzz_targets/ebml_vint.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_ebml_classify"
+path = "fuzz_targets/ebml_classify.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_tfrecord_decode"
+path = "fuzz_targets/tfrecord_decode.rs"
+doc = false

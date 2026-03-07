@@ -43,6 +43,14 @@ pub struct VideoDecoder {
     draining: bool,
     /// `true` once the decoder has returned EOF during draining.
     finished: bool,
+    /// Pre-allocated RGB frame for reuse across decode calls.
+    rgb_frame: ffmpeg::util::frame::video::Video,
+    /// Cached stride for the RGB frame.
+    rgb_stride: usize,
+    /// Width * 3 (bytes per row of tightly-packed RGB24).
+    w3: usize,
+    /// Pre-allocated buffer for extracting RGB data, reused across frames.
+    extract_buf: Vec<u8>,
 }
 
 impl VideoDecoder {
@@ -83,6 +91,8 @@ impl VideoDecoder {
         let src_format = decoder.format();
 
         // Create scaler: source pixel format -> RGB24.
+        // Use FAST_BILINEAR for speed — quality difference is negligible for
+        // same-resolution color space conversion (no scaling involved).
         let scaler = ffmpeg::software::scaling::Context::get(
             src_format,
             width,
@@ -90,9 +100,15 @@ impl VideoDecoder {
             Pixel::RGB24,
             width,
             height,
-            ffmpeg::software::scaling::Flags::BILINEAR,
+            ffmpeg::software::scaling::Flags::FAST_BILINEAR,
         )
         .map_err(|e| ForgeError::Video(format!("scaler: {e}")))?;
+
+        // Pre-allocate reusable RGB frame and extraction buffer.
+        let rgb_frame = ffmpeg::util::frame::video::Video::new(Pixel::RGB24, width, height);
+        let rgb_stride = rgb_frame.stride(0);
+        let w3 = (width * 3) as usize;
+        let extract_buf = Vec::with_capacity(w3 * height as usize);
 
         Ok(Self {
             input,
@@ -105,6 +121,10 @@ impl VideoDecoder {
             total_frames,
             draining: false,
             finished: false,
+            rgb_frame,
+            rgb_stride,
+            w3,
+            extract_buf,
         })
     }
 
@@ -133,30 +153,35 @@ impl VideoDecoder {
         let mut decoded = ffmpeg::util::frame::video::Video::empty();
         match self.decoder.receive_frame(&mut decoded) {
             Ok(()) => {
-                // Convert to RGB24.
-                let mut rgb_frame =
-                    ffmpeg::util::frame::video::Video::new(Pixel::RGB24, self.width, self.height);
-                if let Err(e) = self.scaler.run(&decoded, &mut rgb_frame) {
+                // Convert to RGB24 using the pre-allocated frame.
+                if let Err(e) = self.scaler.run(&decoded, &mut self.rgb_frame) {
                     return Some(Err(ForgeError::Video(format!("scaler: {e}"))));
                 }
 
-                // Extract RGB data (respect stride).
-                let stride = rgb_frame.stride(0);
-                let w3 = (self.width * 3) as usize;
+                // Extract RGB data, reusing the buffer.
                 let h = self.height as usize;
-                let mut data = Vec::with_capacity(w3 * h);
-                let plane = rgb_frame.data(0);
-                for row in 0..h {
-                    let start = row * stride;
-                    data.extend_from_slice(&plane[start..start + w3]);
+                self.extract_buf.clear();
+                let plane = self.rgb_frame.data(0);
+                if self.rgb_stride == self.w3 {
+                    // Fast path: stride matches row width — bulk copy.
+                    self.extract_buf.extend_from_slice(&plane[..self.w3 * h]);
+                } else {
+                    // Slow path: copy row-by-row respecting stride padding.
+                    for row in 0..h {
+                        let start = row * self.rgb_stride;
+                        self.extract_buf
+                            .extend_from_slice(&plane[start..start + self.w3]);
+                    }
                 }
 
                 let frame = DecodedFrame {
-                    data: Bytes::from(data),
+                    data: Bytes::from(std::mem::take(&mut self.extract_buf)),
                     width: self.width,
                     height: self.height,
                     frame_index: self.frame_index,
                 };
+                // Re-allocate extract_buf for next frame (take() leaves an empty Vec).
+                self.extract_buf = Vec::with_capacity(self.w3 * h);
                 self.frame_index += 1;
                 Some(Ok(frame))
             }

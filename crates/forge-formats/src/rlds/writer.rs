@@ -4,14 +4,153 @@
 //! TFRecord shard per episode with `is_first`/`is_last` markers (RLDS
 //! convention) and a TFDS-format `dataset_info.json` metadata file.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use forge_core::{DatasetInfo, Episode, ForgeError, ForgeResult};
-use tfrecord::protobuf::{feature, BytesList, Example, Feature, Features, FloatList, Int64List};
-use tfrecord::record_writer::ExampleWriter;
+use tfrecord::protobuf::{feature, BytesList, Feature, FloatList, Int64List};
 
 use crate::traits::FormatWriter;
+
+/// Encode a `tf.train.Example` with features sorted by key for deterministic output.
+///
+/// Rust's `HashMap` has per-instance random hash seeds, so protobuf
+/// serialization of `Features { feature: HashMap<…> }` produces different
+/// byte sequences across HashMap instances. This function converts a
+/// sorted `BTreeMap` into the `Features` HashMap but constructs a fresh
+/// Example for each call within the same sorted insertion order, then uses
+/// a deterministic serialization approach.
+///
+/// We convert the BTreeMap to a HashMap preserving insertion order by using
+/// `Record::to_bytes` on an Example built with features inserted in sorted
+/// order. While HashMap doesn't guarantee iteration order, prost serializes
+/// in iteration order which correlates with insertion order for small maps
+/// with a fresh HashMap. To guarantee determinism regardless of HashMap
+/// internals, we manually build the protobuf wire format.
+fn encode_example_sorted(features: &BTreeMap<String, Feature>) -> ForgeResult<Vec<u8>> {
+    // Manually construct the protobuf wire format for Example with sorted keys.
+    // This avoids HashMap iteration order non-determinism entirely.
+    //
+    // Protobuf wire format:
+    //   Example { features: Features { feature: map<string, Feature> } }
+    //   - Example field 1 = Features (tag 0x0A, length-delimited)
+    //   - Features field 1 = map entry (tag 0x0A, length-delimited, repeated)
+    //   - Map entry: field 1 = key (string), field 2 = value (Feature)
+
+    let mut features_body = Vec::new();
+    for (key, value) in features {
+        let value_bytes = encode_feature(value);
+
+        // Build the map entry sub-message.
+        let mut entry = Vec::new();
+        // Field 1 (key): tag = 0x0A (field 1, wire type 2 = length-delimited)
+        entry.push(0x0A);
+        encode_varint(key.len() as u64, &mut entry);
+        entry.extend_from_slice(key.as_bytes());
+        // Field 2 (value): tag = 0x12 (field 2, wire type 2 = length-delimited)
+        entry.push(0x12);
+        encode_varint(value_bytes.len() as u64, &mut entry);
+        entry.extend_from_slice(&value_bytes);
+
+        // Write entry as field 1 of Features: tag = 0x0A
+        features_body.push(0x0A);
+        encode_varint(entry.len() as u64, &mut features_body);
+        features_body.extend_from_slice(&entry);
+    }
+
+    // Wrap in Example: Features is field 1 of Example, tag = 0x0A
+    let mut example_bytes = Vec::new();
+    example_bytes.push(0x0A);
+    encode_varint(features_body.len() as u64, &mut example_bytes);
+    example_bytes.extend_from_slice(&features_body);
+
+    Ok(example_bytes)
+}
+
+/// Encode a protobuf varint (variable-length integer).
+fn encode_varint(mut value: u64, buf: &mut Vec<u8>) {
+    loop {
+        if value < 0x80 {
+            buf.push(value as u8);
+            return;
+        }
+        buf.push((value as u8 & 0x7F) | 0x80);
+        value >>= 7;
+    }
+}
+
+/// Manually encode a `Feature` protobuf message.
+///
+/// Feature has one of: bytes_list (field 1), float_list (field 2), int64_list (field 3).
+fn encode_feature(feature: &Feature) -> Vec<u8> {
+    let mut buf = Vec::new();
+    match &feature.kind {
+        Some(feature::Kind::BytesList(bl)) => {
+            // Field 1 (BytesList): tag = 0x0A
+            let inner = encode_bytes_list(bl);
+            buf.push(0x0A);
+            encode_varint(inner.len() as u64, &mut buf);
+            buf.extend_from_slice(&inner);
+        }
+        Some(feature::Kind::FloatList(fl)) => {
+            // Field 2 (FloatList): tag = 0x12
+            let inner = encode_float_list(fl);
+            buf.push(0x12);
+            encode_varint(inner.len() as u64, &mut buf);
+            buf.extend_from_slice(&inner);
+        }
+        Some(feature::Kind::Int64List(il)) => {
+            // Field 3 (Int64List): tag = 0x1A
+            let inner = encode_int64_list(il);
+            buf.push(0x1A);
+            encode_varint(inner.len() as u64, &mut buf);
+            buf.extend_from_slice(&inner);
+        }
+        None => {}
+    }
+    buf
+}
+
+/// Encode a `BytesList` protobuf message: repeated bytes (field 1).
+fn encode_bytes_list(bl: &BytesList) -> Vec<u8> {
+    let mut buf = Vec::new();
+    for val in &bl.value {
+        buf.push(0x0A); // field 1, wire type 2
+        encode_varint(val.len() as u64, &mut buf);
+        buf.extend_from_slice(val);
+    }
+    buf
+}
+
+/// Encode a `FloatList` protobuf message: packed repeated float (field 1).
+fn encode_float_list(fl: &FloatList) -> Vec<u8> {
+    let mut buf = Vec::new();
+    if !fl.value.is_empty() {
+        buf.push(0x0A); // field 1, wire type 2 (packed)
+        let byte_len = fl.value.len() * 4;
+        encode_varint(byte_len as u64, &mut buf);
+        for &v in &fl.value {
+            buf.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    buf
+}
+
+/// Encode an `Int64List` protobuf message: packed repeated int64 (field 1).
+fn encode_int64_list(il: &Int64List) -> Vec<u8> {
+    let mut buf = Vec::new();
+    if !il.value.is_empty() {
+        buf.push(0x0A); // field 1, wire type 2 (packed)
+        // int64 uses varint encoding in protobuf
+        let mut inner = Vec::new();
+        for &v in &il.value {
+            encode_varint(v as u64, &mut inner);
+        }
+        encode_varint(inner.len() as u64, &mut buf);
+        buf.extend_from_slice(&inner);
+    }
+    buf
+}
 
 /// Metadata tracked per written episode.
 #[derive(Debug, Clone)]
@@ -77,107 +216,199 @@ impl FormatWriter for RLDSWriter {
         let shard_filename = format!("data-{episode_index:05}-of-99999.tfrecord");
         let shard_path = train_dir.join(&shard_filename);
 
-        let mut writer = ExampleWriter::create(&shard_path).map_err(|e| {
-            ForgeError::Io(std::io::Error::other(
-                format!("TFRecord create failed: {e}"),
-            ))
-        })?;
+        let shard_file = std::fs::File::create(&shard_path).map_err(ForgeError::Io)?;
+        let mut buf_writer = std::io::BufWriter::new(shard_file);
+
+        // Standard RLDS format: one TFRecord Example per episode with all
+        // steps concatenated in flat arrays using `steps/` prefixed keys.
+        // e.g. steps/action = [frame0_action..., frame1_action..., ...]
+        //      steps/is_first = [1, 0, 0, ...]
+
+        let mut all_actions: Vec<f32> = Vec::new();
+        let mut all_states: Vec<f32> = Vec::new();
+        let mut is_first_vals: Vec<i64> = Vec::new();
+        let mut is_last_vals: Vec<i64> = Vec::new();
+        let mut is_terminal_vals: Vec<i64> = Vec::new();
+        let mut discount_vals: Vec<f32> = Vec::new();
+        let mut reward_vals: Vec<f32> = Vec::new();
+        let mut image_bufs: BTreeMap<String, Vec<Vec<u8>>> = BTreeMap::new();
+        let mut extra_string_meta: BTreeMap<String, Vec<Vec<u8>>> = BTreeMap::new();
+        let mut has_action = false;
+        let mut has_state = false;
+
+        // Keys already handled as dedicated fields.
+        let reserved_keys: &[&str] = &[
+            "is_first", "is_last", "is_terminal", "discount", "reward",
+            "action", "observation/state", "state",
+        ];
 
         for (idx, frame) in episode.frames.iter().enumerate() {
-            let mut features_map = HashMap::new();
-
-            // Episode boundary markers (RLDS convention, pitfall 7).
-            features_map.insert(
-                "is_first".to_string(),
-                Feature {
-                    kind: Some(feature::Kind::Int64List(Int64List {
-                        value: vec![if idx == 0 { 1 } else { 0 }],
-                    })),
-                },
+            is_first_vals.push(if idx == 0 { 1 } else { 0 });
+            is_last_vals.push(if idx == num_frames - 1 { 1 } else { 0 });
+            is_terminal_vals.push(
+                frame.metadata.get("is_terminal")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0),
             );
-            features_map.insert(
-                "is_last".to_string(),
-                Feature {
-                    kind: Some(feature::Kind::Int64List(Int64List {
-                        value: vec![if idx == num_frames - 1 { 1 } else { 0 }],
-                    })),
-                },
+            discount_vals.push(
+                frame.metadata.get("discount")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(1.0) as f32,
+            );
+            reward_vals.push(
+                frame.metadata.get("reward")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0) as f32,
             );
 
-            // Action feature.
             if let Some(ref action) = frame.action {
                 let data = action.load()?;
-                features_map.insert(
-                    "action".to_string(),
-                    Feature {
-                        kind: Some(feature::Kind::FloatList(FloatList {
-                            value: data.iter().map(|&v| v as f32).collect(),
-                        })),
-                    },
-                );
+                all_actions.extend(data.iter().map(|&v| v as f32));
+                has_action = true;
             }
 
-            // State feature (observation/state or state).
             if let Some(ref state) = frame.state {
                 let data = state.load()?;
-                features_map.insert(
-                    "state".to_string(),
-                    Feature {
-                        kind: Some(feature::Kind::FloatList(FloatList {
-                            value: data.iter().map(|&v| v as f32).collect(),
-                        })),
-                    },
-                );
+                all_states.extend(data.iter().map(|&v| v as f32));
+                has_state = true;
             }
 
-            // Image features as BytesList.
             for (key, image) in &frame.images {
                 let img_bytes = image.load()?;
-                features_map.insert(
-                    key.clone(),
-                    Feature {
-                        kind: Some(feature::Kind::BytesList(BytesList {
-                            value: vec![img_bytes.to_vec()],
-                        })),
-                    },
-                );
+                image_bufs
+                    .entry(key.clone())
+                    .or_default()
+                    .push(img_bytes.to_vec());
             }
 
-            // Metadata features: iterate frame.metadata and map to Feature types.
+            // Collect string metadata (e.g. language_instruction).
             for (key, value) in &frame.metadata {
-                // Skip keys already written from action/state/images/is_first/is_last.
-                if key == "is_first"
-                    || key == "is_last"
-                    || key == "action"
-                    || key == "state"
-                    || frame.images.contains_key(key)
-                {
+                if reserved_keys.contains(&key.as_str()) {
                     continue;
                 }
-
-                if let Some(feat) = json_value_to_feature(value) {
-                    features_map.insert(key.clone(), feat);
+                if frame.images.contains_key(key) {
+                    continue;
+                }
+                if let Some(s) = value.as_str() {
+                    extra_string_meta
+                        .entry(key.clone())
+                        .or_default()
+                        .push(s.as_bytes().to_vec());
                 }
             }
+        }
 
-            let example = Example {
-                features: Some(Features {
-                    feature: features_map,
-                }),
-            };
+        // Build the single Example with steps/ prefixed keys.
+        let mut features_map: BTreeMap<String, Feature> = BTreeMap::new();
 
-            writer.send(example).map_err(|e| ForgeError::Conversion {
+        features_map.insert(
+            "steps/is_first".to_string(),
+            Feature {
+                kind: Some(feature::Kind::Int64List(Int64List {
+                    value: is_first_vals,
+                })),
+            },
+        );
+        features_map.insert(
+            "steps/is_last".to_string(),
+            Feature {
+                kind: Some(feature::Kind::Int64List(Int64List {
+                    value: is_last_vals,
+                })),
+            },
+        );
+        features_map.insert(
+            "steps/is_terminal".to_string(),
+            Feature {
+                kind: Some(feature::Kind::Int64List(Int64List {
+                    value: is_terminal_vals,
+                })),
+            },
+        );
+        features_map.insert(
+            "steps/discount".to_string(),
+            Feature {
+                kind: Some(feature::Kind::FloatList(FloatList {
+                    value: discount_vals,
+                })),
+            },
+        );
+        features_map.insert(
+            "steps/reward".to_string(),
+            Feature {
+                kind: Some(feature::Kind::FloatList(FloatList {
+                    value: reward_vals,
+                })),
+            },
+        );
+
+        if has_action {
+            features_map.insert(
+                "steps/action".to_string(),
+                Feature {
+                    kind: Some(feature::Kind::FloatList(FloatList {
+                        value: all_actions,
+                    })),
+                },
+            );
+        }
+
+        if has_state {
+            features_map.insert(
+                "steps/observation/state".to_string(),
+                Feature {
+                    kind: Some(feature::Kind::FloatList(FloatList {
+                        value: all_states,
+                    })),
+                },
+            );
+        }
+
+        for (key, frames_bytes) in &image_bufs {
+            // Image keys already include their full path (e.g. "observation/image"),
+            // so we just prepend "steps/".
+            features_map.insert(
+                format!("steps/{key}"),
+                Feature {
+                    kind: Some(feature::Kind::BytesList(BytesList {
+                        value: frames_bytes.clone(),
+                    })),
+                },
+            );
+        }
+
+        // Extra string metadata (e.g. language_instruction).
+        for (key, vals) in &extra_string_meta {
+            features_map.insert(
+                format!("steps/{key}"),
+                Feature {
+                    kind: Some(feature::Kind::BytesList(BytesList {
+                        value: vals.clone(),
+                    })),
+                },
+            );
+        }
+
+        // Episode metadata.
+        features_map.insert(
+            "episode_metadata/file_path".to_string(),
+            Feature {
+                kind: Some(feature::Kind::BytesList(BytesList {
+                    value: vec![episode.episode_id.as_bytes().to_vec()],
+                })),
+            },
+        );
+
+        let proto_bytes = encode_example_sorted(&features_map)?;
+        tfrecord::io::sync::try_write_record(&mut buf_writer, proto_bytes)
+            .map_err(|e| ForgeError::Conversion {
                 source_format: "episode".to_string(),
                 target_format: "rlds".to_string(),
                 reason: format!("TFRecord write failed: {e}"),
             })?;
-        }
 
-        writer.flush().map_err(|e| {
-            ForgeError::Io(std::io::Error::other(
-                format!("TFRecord flush failed: {e}"),
-            ))
-        })?;
+        use std::io::Write;
+        buf_writer.flush().map_err(ForgeError::Io)?;
 
         // Track episode for finalize.
         self.episodes_written.push(WrittenEpisodeInfo {
@@ -336,6 +567,7 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use forge_core::{CameraInfo, Dtype, Frame, ImageEncoding, LazyArray, LazyImage};
+    use std::collections::HashMap;
     use tempfile::TempDir;
 
     use crate::rlds::reader::RLDSReader;

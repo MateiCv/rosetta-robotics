@@ -13,5 +13,5 @@
 pub mod reader;
 pub mod writer;
 
-pub use reader::{RoboDMDetector, RoboDMReader};
+pub use reader::{fuzz_classify_element, fuzz_read_vint, RoboDMDetector, RoboDMReader};
 pub use writer::RoboDMWriter;

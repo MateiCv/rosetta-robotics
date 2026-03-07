@@ -42,3 +42,5 @@ flate2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
+proptest.workspace = true
+bytes.workspace = true
