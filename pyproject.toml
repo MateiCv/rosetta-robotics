@@ -1,118 +1,23 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["maturin>=1.8,<2.0"]
+build-backend = "maturin"
 
 [project]
-name = "forge-robotics"
+name = "rosetta-robotics"
 version = "0.1.0"
-description = "The normalization layer for robotics data - converts between RLDS, LeRobot, Zarr, and other formats"
-readme = "README.md"
-license = "MIT"
-requires-python = ">=3.10"
-authors = [
-    { name = "Forge Team" }
-]
-keywords = ["robotics", "datasets", "rlds", "lerobot", "data-conversion"]
+description = "Universal robotics dataset converter — convert, inspect, and analyze any robotics dataset format"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+keywords = ["robotics", "dataset", "converter", "lerobot", "rlds", "hdf5", "zarr", "rosbag"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
-dependencies = [
-    "numpy>=1.24.0",
-    "typer>=0.9.0",
-    "rich>=13.0.0",
-    "pyyaml>=6.0",
-]
-
-[project.optional-dependencies]
-rlds = [
-    "tensorflow>=2.13.0",
-    "tensorflow-datasets>=4.9.0",
-]
-lerobot = [
-    "pyarrow>=14.0.0",
-    "datasets>=2.16.0",
-]
-hub = [
-    "huggingface_hub>=0.20.0",
-]
-zarr = [
-    "zarr>=2.16.0",
-]
-rosbag = [
-    "rosbags>=0.9.0",
-]
-hdf5 = [
-    "h5py>=3.8.0",
-]
-robodm = [
-    "robodm>=0.1.0",
-]
-video = [
-    "av>=11.0.0",
-]
-visualize = [
-    "opencv-python>=4.8.0",
-    "matplotlib>=3.7.0",
-]
-all = [
-    "forge-robotics[rlds,lerobot,zarr,rosbag,hdf5,robodm,video,hub,visualize]",
-]
-dev = [
-    "pytest>=7.4.0",
-    "pytest-cov>=4.1.0",
-    "mypy>=1.7.0",
-    "ruff>=0.1.0",
-]
-
-[project.scripts]
-forge = "forge.cli:app"
-
-[project.urls]
-Homepage = "https://github.com/your-org/forge"
-Documentation = "https://github.com/your-org/forge#readme"
-Repository = "https://github.com/your-org/forge"
-
-[tool.hatch.build.targets.wheel]
-packages = ["forge"]
-
-[tool.ruff]
-line-length = 100
-target-version = "py310"
-
-[tool.ruff.lint]
-select = ["E", "F", "I", "N", "W", "UP"]
-ignore = ["E501"]
-
-[tool.mypy]
-python_version = "3.10"
-warn_return_any = false  # Disabled due to external libraries returning Any
-warn_unused_ignores = true
-strict = false  # Disabled strict for now due to many external library issues
-
-# Ignore missing stubs for external libraries
-[[tool.mypy.overrides]]
-module = [
-    "zarr.*",
-    "tensorflow.*",
-    "tensorflow_datasets.*",
-    "pyarrow.*",
-    "rosbags.*",
-    "av.*",
-    "yaml.*",
-    "h5py.*",
-    "robodm.*",
-    "cv2.*",
-]
-ignore_missing_imports = true
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-v --cov=forge --cov-report=term-missing"
+[tool.maturin]
+manifest-path = "crates/rosetta-python/Cargo.toml"
+features = ["pyo3/extension-module"]

@@ -1,184 +1,282 @@
-<p align="center">
-<pre>
-███████╗ ██████╗ ██████╗  ██████╗ ███████╗
-██╔════╝██╔═══██╗██╔══██╗██╔════╝ ██╔════╝
-█████╗  ██║   ██║██████╔╝██║  ███╗█████╗
-██╔══╝  ██║   ██║██╔══██╗██║   ██║██╔══╝
-██║     ╚██████╔╝██║  ██║╚██████╔╝███████╗
-╚═╝      ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝
-</pre>
-<h2>⚒ Robotics Data Toolkit ⚒</h2>
-<i>Convert, inspect, visualize, and score robotics datasets across every major format.</i>
-<br><br>
-<a href="https://github.com/arpitg1304/forge"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square"></a>
-<a href="https://github.com/arpitg1304/forge/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green?style=flat-square"></a>
-<br><br>
-<code>RLDS ═══╗         ╔═══► LeRobot</code><br>
-<code>Zarr ═══╬════⚙════╬═══► RoboDM</code><br>
-<code>HDF5 ═══╝         ╚═══► RLDS</code>
-</p>
+# Rosetta Robotics
 
-Convert between robotics dataset formats with one command. Score demonstration quality with research-backed metrics.
-
-| Format | Read | Write | Visualize | Notes |
-|--------|:----:|:-----:|:---------:|-------|
-| RLDS | ✓ | ✓ | ✓ | Open-X, TensorFlow Datasets |
-| LeRobot v2/v3 | ✓ | ✓ | ✓ | HuggingFace, Parquet + MP4 |
-| GR00T | ✓ | - | ✓ | NVIDIA Isaac, LeRobot v2 with embodiment metadata |
-| RoboDM | ✓ | ✓ | ✓ | Berkeley's .vla format, up to 70x compression* |
-| Zarr | ✓ | - | ✓ | Diffusion Policy, UMI |
-| HDF5 | ✓ | - | ✓ | robomimic, ACT/ALOHA |
-| Rosbag | ✓ | - | ✓ | ROS1 .bag, ROS2 MCAP |
-
-*\*RoboDM requires manual installation from GitHub (see below)*
-
-See [docs/model_formats.md](docs/model_formats.md) for which models (Octo, OpenVLA, ACT, Diffusion Policy, etc.) use which format. See [docs/format_reference.md](docs/format_reference.md) for detailed format specifications.
-
-## Why Forge?
-
-Every robotics lab has their own data format: Open-X uses RLDS, HuggingFace uses LeRobot, Diffusion Policy uses Zarr, robomimic uses HDF5. Want to train Octo on your ALOHA data? Write a converter. Want to use LeRobot on Open-X datasets? Write another.
-
-Forge uses a hub-and-spoke architecture — one intermediate representation, O(n) format support:
+**Any format in, any format out.** The universal robotics dataset converter for Rust and Python.
 
 ```
-Any Reader → Episode/Frame → Any Writer
+cargo install rosetta-robotics        pip install rosetta-robotics
 ```
 
-Add a reader, get all writers for free. Add a writer, get all readers for free. No N×M conversion logic. See [docs/architecture.md](docs/architecture.md) for details.
+```
+                    +-------------+
+  HDF5      -----\ |             | /-----      LeRobot v3
+  Zarr      -----\ |             | /-----      LeRobot v2
+  RLDS      -----\ |   ROSETTA   | /-----      HDF5
+  ROS Bag   -----\ |             | /-----      Zarr
+  LeRobot   -----/ |  convert    | \-----      RLDS
+  GR00T     -----/ |  inspect    | \-----      ROS Bag
+  RoboDM    -----/ |  quality    | \-----      RoboDM
+                    +-------------+
+```
 
-## Quick Start
+## Supported Formats
+
+| Format | Read | Write | Description |
+|--------|------|-------|-------------|
+| LeRobot v3 | Yes | Yes | Parquet + MP4 video |
+| LeRobot v2 | Yes | Yes | Per-episode Parquet + MP4 |
+| GR00T | Yes | - | NVIDIA Isaac / GR00T |
+| HDF5 | Yes | Yes | robomimic, ACT, ALOHA |
+| Zarr | Yes | Yes | Diffusion Policy, UMI |
+| RLDS | Yes | Yes | TFRecord, Open X-Embodiment |
+| ROS Bag | Yes | Yes | ROS 1 bags, ROS 2 MCAP |
+| RoboDM | Yes | Yes | Berkeley .vla |
+
+---
+
+## Installation
+
+**Rust (CLI)**
+```bash
+cargo install --git https://github.com/verlet-robotics/rosetta
+```
+
+**Rust (Library)** — add to your `Cargo.toml`:
+```toml
+[dependencies]
+rosetta-core = { git = "https://github.com/verlet-robotics/rosetta" }
+rosetta-formats = { git = "https://github.com/verlet-robotics/rosetta" }
+rosetta-pipeline = { git = "https://github.com/verlet-robotics/rosetta" }
+rosetta-quality = { git = "https://github.com/verlet-robotics/rosetta" }
+```
+
+**Python** — requires a [Rust toolchain](https://rustup.rs):
+```bash
+pip install git+https://github.com/verlet-robotics/rosetta
+```
+
+---
+
+## CLI Usage
+
+### `rosetta formats`
+
+Lists all supported dataset formats and whether they support reading, writing, or both.
 
 ```bash
-git clone https://github.com/arpitg1304/forge.git
-cd forge
-pip install -e ".[all]"
+rosetta formats
+rosetta formats --json    # output as JSON
 ```
 
-### RoboDM Support (Optional)
+### `rosetta inspect`
 
-RoboDM requires manual installation from GitHub (PyPI version has a codec bug):
+Shows dataset metadata without loading all data — format, episode count, frame count, camera resolutions, field schemas (state/action dimensions and dtypes), and FPS.
 
 ```bash
-git clone https://github.com/BerkeleyAutomation/robodm.git
-pip install -e robodm
+rosetta inspect /path/to/dataset
+rosetta inspect /path/to/dataset --json
+rosetta inspect /path/to/dataset --generate-config config.yaml   # generate a conversion config template
 ```
 
-### Usage
+### `rosetta convert`
+
+Converts a dataset from one format to another. Auto-detects the source format. Runs in parallel with memory-aware throttling.
 
 ```bash
-# See what's in a dataset
-forge inspect /path/to/dataset
-
-# Convert it
-forge convert /path/to/rlds ./output --format lerobot-v3
-forge convert hf://arpitg1304/stack_lego ./stack_lego_rlds --format rlds --workers 4 --visualize
-forge convert hf://lerobot/pusht ./pusht_robodm --format robodm
+rosetta convert /path/to/input /path/to/output --target-format lerobot-v3
+rosetta convert input/ output/ --source-format hdf5 --target-format zarr
+rosetta convert input/ output/ --target-format rlds --config conversion.yaml   # field/camera remapping
+rosetta convert input/ output/ --target-format lerobot-v3 --deterministic      # bit-identical output
+rosetta convert input/ output/ --target-format lerobot-v3 --threads 4          # limit parallelism
 ```
 
-Works with HuggingFace Hub too:
+### `rosetta quality`
+
+Runs quality analysis on a dataset. Computes per-episode scores across 7 metrics: smoothness, dead actions, static detection, gripper chatter, timestamp regularity, action saturation, and action entropy. Returns a weighted composite score (0-1) for each episode.
 
 ```bash
-forge inspect hf://lerobot/pusht
-forge convert hf://lerobot/pusht ./output --format lerobot-v3
+rosetta quality /path/to/dataset
+rosetta quality /path/to/dataset --json
+rosetta quality /path/to/dataset --save-json report.json
+rosetta quality /path/to/dataset --config quality.yaml   # custom metric weights
 ```
 
-## Python API
+### `rosetta filter`
+
+Filters episodes by quality score. Copies only episodes that meet the threshold to the output, leaving the source unchanged.
+
+```bash
+rosetta filter /path/to/dataset /path/to/output --min-quality 0.7
+rosetta filter /path/to/dataset --dry-run --min-quality 0.5   # preview without writing
+rosetta filter /path/to/dataset /path/to/output --config filter.yaml
+```
+
+### `rosetta stats`
+
+Shows dataset statistics with distribution analysis — frame counts, action/state ranges, image dimensions, and per-episode breakdowns.
+
+```bash
+rosetta stats /path/to/dataset
+rosetta stats /path/to/dataset --json
+```
+
+### `rosetta export-video`
+
+Exports episodes as standalone MP4 video files from camera image data.
+
+```bash
+rosetta export-video /path/to/dataset --output ./videos
+rosetta export-video /path/to/dataset --episodes 0-10 --camera top --fps 30
+```
+
+### `rosetta hub`
+
+Download and upload datasets from HuggingFace Hub.
+
+```bash
+rosetta hub download lerobot/pusht_v2 --output ./data
+rosetta hub upload /path/to/dataset username/my-dataset --token $HF_TOKEN --private
+```
+
+### `rosetta visualize`
+
+Opens an interactive terminal UI to browse episodes and frames, view camera images, and inspect state/action values.
+
+```bash
+rosetta visualize /path/to/dataset
+```
+
+### `rosetta completions`
+
+Generates shell completion scripts for tab-completion of commands, flags, and arguments.
+
+```bash
+rosetta completions bash >> ~/.bashrc
+rosetta completions zsh >> ~/.zfunc/_rosetta
+rosetta completions fish > ~/.config/fish/completions/rosetta.fish
+```
+
+---
+
+## Python Usage
 
 ```python
-import forge
+import rosetta_robotics
 
-# Inspect
-info = forge.inspect("/path/to/dataset")
-print(info.format, info.num_episodes, info.cameras)
+# List all supported formats and their read/write capabilities
+for fmt in rosetta_robotics.formats():
+    print(fmt.name, fmt.can_read, fmt.can_write)
 
-# Convert
-forge.convert(
-    "/path/to/rlds",
+# Auto-detect the format of a dataset on disk
+fmt = rosetta_robotics.detect_format("/path/to/dataset")
+
+# Inspect dataset metadata without loading all data
+info = rosetta_robotics.inspect("/path/to/dataset")
+print(info.format, info.total_episodes, info.total_frames, info.fps)
+for cam in info.cameras:
+    print(cam.name, cam.height, cam.width)
+for field in info.fields:
+    print(field.name, field.shape, field.dtype)
+
+# Read all episodes and access frame data
+episodes = rosetta_robotics.read_episodes("/path/to/dataset")
+for ep in episodes:
+    print(ep.episode_id, ep.num_frames)
+    frame = ep.frame(0)
+    print(frame.state)       # joint positions as list[float]
+    print(frame.action)      # actions as list[float]
+    print(frame.image_names) # available camera names
+
+    # Access raw image bytes and dimensions
+    raw = frame.image_bytes("top")
+    h, w, c = frame.image_shape("top")
+
+# Convert a dataset from one format to another
+result = rosetta_robotics.convert(
+    "/path/to/input",
     "/path/to/output",
-    target_format="lerobot-v3"
+    target_format="lerobot-v3",
+    deterministic=True,     # bit-identical output
+    num_workers=4,          # limit parallelism
 )
+print(f"Converted {result.episodes_converted} episodes, {result.total_frames} frames")
+if result.errors:
+    print("Errors:", result.errors)
+
+# Run quality analysis on a dataset
+report = rosetta_robotics.analyze_quality("/path/to/dataset")
+print(f"Overall score: {report.overall_score:.2f}")
+print(f"Recommendations: {report.recommendations}")
+for eq in report.per_episode:
+    print(f"  {eq.episode_id}: score={eq.composite_score}, flags={eq.flags}")
 ```
 
-## Quality Metrics
+---
 
-Automated episode-level quality scoring from proprioception data alone — no video processing needed.
+## Rust Usage
 
-```bash
-forge quality ./my_dataset
-forge quality hf://lerobot/aloha_sim_cube --export report.json
+```rust
+use std::path::Path;
+
+fn main() -> rosetta_core::RosettaResult<()> {
+    // List all supported formats
+    for fmt in rosetta_formats::all_formats() {
+        println!("{}: read={}, write={}", fmt.name, fmt.can_read, fmt.can_write);
+    }
+
+    // Auto-detect format and inspect metadata
+    let path = Path::new("/path/to/dataset");
+    let format_name = rosetta_formats::detect_format(path)?;
+    let reader = rosetta_formats::get_reader(format_name)?;
+    let info = reader.inspect(path)?;
+    println!("{} episodes, {} frames", info.total_episodes, info.total_frames);
+
+    // Read episodes
+    let output = reader.read_episodes(path)?;
+    for episode in &output.data {
+        println!("Episode {}: {} frames", episode.episode_id, episode.frame_count());
+        let frame = &episode.frames[0];
+
+        // Access state/action (lazy-loaded)
+        if let Some(state) = &frame.state {
+            let values = state.load()?;
+            println!("  state: {:?}", &values[..5.min(values.len())]);
+        }
+        if let Some(action) = &frame.action {
+            let values = action.load()?;
+            println!("  action: {:?}", &values[..5.min(values.len())]);
+        }
+
+        // Access images (lazy-loaded)
+        for name in frame.image_names() {
+            let img = &frame.images[name];
+            let (h, w, c) = img.shape();
+            println!("  camera '{}': {}x{}x{}", name, h, w, c);
+        }
+    }
+
+    // Convert between formats
+    let config = rosetta_core::ConversionConfig {
+        target_format: Some("lerobot-v3".into()),
+        deterministic: true,
+        ..Default::default()
+    };
+    let converter = rosetta_pipeline::Converter::new(config);
+    let result = converter.convert(
+        Path::new("/path/to/input"),
+        Path::new("/path/to/output"),
+    )?;
+    println!("Converted {} episodes ({} frames)", result.episodes_converted, result.total_frames);
+
+    // Quality analysis
+    let analyzer = rosetta_quality::QualityAnalyzer::new(rosetta_quality::QualityConfig::default());
+    let reader = rosetta_formats::get_reader(format_name)?;
+    let report = analyzer.analyze_dataset(reader.as_ref(), path)?;
+    println!("Overall quality: {:.2}", report.overall_score);
+
+    Ok(())
+}
 ```
 
-Scores each episode 0-10 based on 8 research-backed metrics:
+---
 
-- **Smoothness (LDLJ)** — jerk-based smoothness from motor control literature (Hogan & Sternad, 2009)
-- **Dead actions** — zero/constant action detection (Kim et al. "OpenVLA", 2024)
-- **Gripper chatter** — rapid open/close transitions (Sakr et al., 2024)
-- **Static detection** — idle periods where the robot isn't moving (Liu et al. "SCIZOR", 2025)
-- **Timestamp regularity** — dropped frames and frequency jitter
-- **Action saturation** — time spent at hardware limits
-- **Action entropy** — diversity vs repetitiveness (Belkhale et al. "DemInf", 2025)
-- **Path length** — wandering/hesitation in joint space
-
-See [forge/quality/README.md](forge/quality/README.md) for full metric details, paper references, and how to add new metrics.
-
-## Episode Filtering
-
-Filter datasets by quality score, flags, or episode IDs. Supports dry-run previews and pre-computed quality reports.
-
-```bash
-forge filter ./my_dataset --min-quality 6.0                          # Dry-run preview
-forge filter ./my_dataset ./filtered --min-quality 6.0               # Write filtered dataset
-forge filter ./my_dataset ./filtered --exclude-flags jerky,mostly_static
-forge filter ./my_dataset ./filtered --from-report report.json       # Skip re-analysis
-```
-
-See [forge/filter/README.md](forge/filter/README.md) for full details.
-
-## CLI Reference
-
-See [docs/cli.md](docs/cli.md) for the full command reference including:
-
-- `forge inspect` - Dataset inspection and schema analysis
-- `forge convert` - Format conversion with camera mapping
-- `forge visualize` - Interactive dataset viewer
-- `forge quality` - Episode-level quality scoring ([details](forge/quality/README.md))
-- `forge filter` - Quality-based episode filtering ([details](forge/filter/README.md))
-- `forge stats` - Compute dataset statistics
-- `forge export-video` - Extract camera videos as MP4
-- `forge hub` - Search and download from HuggingFace
-
-## Configuration
-
-For complex conversions, use a YAML config:
-
-```bash
-forge inspect my_dataset/ --generate-config config.yaml
-forge convert my_dataset/ output/ --config config.yaml
-```
-
-See [docs/configuration.md](docs/configuration.md) for details.
-
-## Roadmap
-
-Planned features (contributions welcome!):
-
-- [ ] **Dataset merging** - Combine multiple datasets into one (`forge merge ds1/ ds2/ --output combined/`)
-- [ ] **Train/val/test splitting** - Split datasets with stratification (`--split 80/10/10`)
-- [ ] **Streaming reads** - Process HuggingFace datasets without full download
-- [x] **Episode filtering** - Filter by quality score, flags, or episode IDs (`forge filter --min-quality 6.0`)
-- [ ] **Depth/point cloud support** - Preserve depth streams from RLDS/Open-X
-- [ ] **GR00T writer** - Write to NVIDIA Isaac GR00T training format (read support complete)
-- [ ] **Distributed conversion** - Scale to 100K+ episode datasets across nodes
-- [ ] **Conversion verification** - Automated diff between source and converted data
-
-## Development
-
-```bash
-make venv && source .venv/bin/activate
-make install-dev
-make test
-```
-
-## License
-
-MIT
+MIT License - Verlet Robotics

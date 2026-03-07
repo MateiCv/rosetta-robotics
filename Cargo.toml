@@ -1,21 +1,21 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/forge-core",
-    "crates/forge-video",
-    "crates/forge-formats",
-    "crates/forge-quality",
-    "crates/forge-pipeline",
-    "crates/forge-cli",
+    "crates/rosetta-core",
+    "crates/rosetta-video",
+    "crates/rosetta-formats",
+    "crates/rosetta-quality",
+    "crates/rosetta-pipeline",
+    "crates/rosetta-cli",
+    "crates/rosetta-python",
 ]
-exclude = ["crates2"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
-repository = "https://github.com/arpitg1304/forge"
+repository = "https://github.com/verlet-robotics/rosetta"
 
 [workspace.dependencies]
 thiserror = "2"
@@ -47,11 +47,12 @@ ebml-iterable = "0.6"
 crc32c = "0.6"
 prost = "0.13"
 flate2 = "1"
-forge-core = { path = "crates/forge-core" }
-forge-formats = { path = "crates/forge-formats" }
-forge-video = { path = "crates/forge-video" }
-forge-quality = { path = "crates/forge-quality" }
-forge-pipeline = { path = "crates/forge-pipeline" }
+rosetta-core = { version = "0.1.0", path = "crates/rosetta-core" }
+rosetta-formats = { version = "0.1.0", path = "crates/rosetta-formats" }
+rosetta-video = { version = "0.1.0", path = "crates/rosetta-video" }
+rosetta-quality = { version = "0.1.0", path = "crates/rosetta-quality" }
+rosetta-pipeline = { version = "0.1.0", path = "crates/rosetta-pipeline" }
+pyo3 = { version = "0.25", features = ["extension-module"] }
 image = "0.25"
 sha2 = "0.10"
 ureq = { version = "2", features = ["json"] }
