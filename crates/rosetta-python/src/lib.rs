@@ -464,6 +464,7 @@ fn inspect(path: &str) -> PyResult<PyDatasetInfo> {
 
 /// Read all episodes from a dataset.
 #[pyfunction]
+#[pyo3(signature = (path, format=None))]
 fn read_episodes(path: &str, format: Option<&str>) -> PyResult<Vec<PyEpisode>> {
     let format_name = match format {
         Some(f) => f.to_string(),
