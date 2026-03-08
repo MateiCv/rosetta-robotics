@@ -8,6 +8,19 @@ use std::path::Path;
 
 use rosetta_core::{DatasetInfo, Episode, RosettaResult, ReadOutput};
 
+/// Options controlling how episodes are read.
+///
+/// Allows callers to skip expensive image/video loading when only numeric
+/// data (action, state, timestamps) is needed — e.g., for quality analysis
+/// or statistics computation.
+#[derive(Debug, Clone, Default)]
+pub struct ReadOptions {
+    /// When `true`, readers should skip decoding video/image data.
+    /// Frames will still be created with correct numeric fields, but
+    /// `frame.images` will be empty.
+    pub skip_images: bool,
+}
+
 /// Reads episodes from a dataset in a specific format.
 ///
 /// Implementors convert from an on-disk format into the canonical
@@ -36,6 +49,29 @@ pub trait FormatReader: Send + Sync {
     /// data, etc.). Per user decision: lenient by default -- skip broken
     /// episodes, collect warnings, show summary after reading completes.
     fn read_episodes(&self, path: &Path) -> RosettaResult<ReadOutput<Vec<Episode>>>;
+
+    /// Read episodes with options controlling what data is loaded.
+    ///
+    /// When `options.skip_images` is true, readers should skip video/image
+    /// decoding to save memory. Default delegates to [`read_episodes`].
+    fn read_episodes_with_options(
+        &self,
+        path: &Path,
+        options: &ReadOptions,
+    ) -> RosettaResult<ReadOutput<Vec<Episode>>> {
+        if options.skip_images {
+            // Default fallback: read everything then strip images.
+            let mut output = self.read_episodes(path)?;
+            for episode in &mut output.data {
+                for frame in &mut episode.frames {
+                    frame.images.clear();
+                }
+            }
+            Ok(output)
+        } else {
+            self.read_episodes(path)
+        }
+    }
 }
 
 /// Writes episodes to a dataset in a specific format.

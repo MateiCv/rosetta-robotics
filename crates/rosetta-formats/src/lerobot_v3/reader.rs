@@ -17,7 +17,7 @@ use rosetta_core::{
     ImageEncoding, LazyArray, LazyImage, ReadOutput,
 };
 
-use crate::traits::FormatReader;
+use crate::traits::{FormatReader, ReadOptions};
 
 use super::info::{self, InfoJson};
 use super::parquet_io::{self, EpisodeData, EpisodeMetadata};
@@ -112,6 +112,24 @@ impl FormatReader for LeRobotV3Reader {
     }
 
     fn read_episodes(&self, path: &Path) -> RosettaResult<ReadOutput<Vec<Episode>>> {
+        self.read_episodes_impl(path, false)
+    }
+
+    fn read_episodes_with_options(
+        &self,
+        path: &Path,
+        options: &ReadOptions,
+    ) -> RosettaResult<ReadOutput<Vec<Episode>>> {
+        self.read_episodes_impl(path, options.skip_images)
+    }
+}
+
+impl LeRobotV3Reader {
+    fn read_episodes_impl(
+        &self,
+        path: &Path,
+        skip_images: bool,
+    ) -> RosettaResult<ReadOutput<Vec<Episode>>> {
         let info = info::read_info(path)?;
         let episode_metadata = parquet_io::read_episode_metadata(path, &info)?;
 
@@ -121,25 +139,28 @@ impl FormatReader for LeRobotV3Reader {
         // Single-pass extraction: group all rows by episode_index at once.
         let all_episode_data = parquet_io::extract_all_episodes_data(&all_batches, &info)?;
 
-        // Collect video feature names and their camera info.
-        let video_features: Vec<(String, u32, u32, u8)> = info
-            .video_features()
-            .iter()
-            .map(|(name, spec)| {
-                let (h, w, c) = if let Some(ref vi) = spec.info {
-                    (vi.height, vi.width, vi.channels)
-                } else if spec.shape.len() >= 3 {
-                    (
-                        spec.shape[0] as u32,
-                        spec.shape[1] as u32,
-                        spec.shape[2] as u8,
-                    )
-                } else {
-                    (0, 0, 3)
-                };
-                (name.to_string(), h, w, c)
-            })
-            .collect();
+        // Collect video feature names and their camera info (skip if not loading images).
+        let video_features: Vec<(String, u32, u32, u8)> = if skip_images {
+            Vec::new()
+        } else {
+            info.video_features()
+                .iter()
+                .map(|(name, spec)| {
+                    let (h, w, c) = if let Some(ref vi) = spec.info {
+                        (vi.height, vi.width, vi.channels)
+                    } else if spec.shape.len() >= 3 {
+                        (
+                            spec.shape[0] as u32,
+                            spec.shape[1] as u32,
+                            spec.shape[2] as u8,
+                        )
+                    } else {
+                        (0, 0, 3)
+                    };
+                    (name.to_string(), h, w, c)
+                })
+                .collect()
+        };
 
         let dataset_path = path.to_path_buf();
 
@@ -149,12 +170,16 @@ impl FormatReader for LeRobotV3Reader {
             compute_episode_video_offsets(&episode_metadata, &info);
 
         // Decode all video frames per (video_key, chunk) in one pass each.
-        // This eliminates the O(N^2) per-frame decoder open.
-        let video_caches = decode_chunk_videos(
-            &dataset_path,
-            &info,
-            &video_features,
-        )?;
+        // Skip entirely when images not needed — this is the major memory saver.
+        let video_caches = if skip_images {
+            HashMap::new()
+        } else {
+            decode_chunk_videos(
+                &dataset_path,
+                &info,
+                &video_features,
+            )?
+        };
 
         // Wrap shared read-only data for parallel access.
         let all_episode_data = Arc::new(all_episode_data);

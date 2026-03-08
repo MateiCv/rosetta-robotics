@@ -24,24 +24,34 @@ use rosetta_core::error::{RosettaError, RosettaResult};
 
 use crate::config::VideoEncoderConfig;
 
+/// Minimum resolution for hardware-accelerated H.264 encoders.
+/// VideoToolbox on macOS and NVENC on Linux reject very small frames.
+const HW_ENCODER_MIN_DIM: u32 = 128;
+
 /// Try hardware-accelerated H.264 encoders, falling back to the configured software codec.
 ///
 /// Returns `(codec, is_hwaccel)`. Attempts platform-specific hw encoders:
 /// - macOS: `h264_videotoolbox`
 /// - Linux: `h264_nvenc`, `h264_vaapi`
-fn select_encoder(fallback_codec: &str) -> (ffmpeg::Codec, bool) {
-    // Platform-specific hardware encoder names, tried in preference order.
-    let hw_codecs: &[&str] = if cfg!(target_os = "macos") {
-        &["h264_videotoolbox"]
-    } else if cfg!(target_os = "linux") {
-        &["h264_nvenc", "h264_vaapi"]
-    } else {
-        &[]
-    };
+///
+/// Hardware encoders are skipped when either dimension is below
+/// [`HW_ENCODER_MIN_DIM`] since most hw encoders reject very small frames.
+fn select_encoder(fallback_codec: &str, width: u32, height: u32) -> (ffmpeg::Codec, bool) {
+    // Skip hardware encoders for tiny frames — they typically require ≥ 128×128.
+    if width >= HW_ENCODER_MIN_DIM && height >= HW_ENCODER_MIN_DIM {
+        // Platform-specific hardware encoder names, tried in preference order.
+        let hw_codecs: &[&str] = if cfg!(target_os = "macos") {
+            &["h264_videotoolbox"]
+        } else if cfg!(target_os = "linux") {
+            &["h264_nvenc", "h264_vaapi"]
+        } else {
+            &[]
+        };
 
-    for &name in hw_codecs {
-        if let Some(codec) = ffenc::find_by_name(name) {
-            return (codec, true);
+        for &name in hw_codecs {
+            if let Some(codec) = ffenc::find_by_name(name) {
+                return (codec, true);
+            }
         }
     }
 
@@ -93,7 +103,7 @@ impl H264VideoEncoder {
         // On macOS: h264_videotoolbox, on Linux: h264_nvenc or h264_vaapi.
         // Falls back to the configured software codec (libx264) if unavailable.
         let (codec, use_hwaccel) = if !config.deterministic {
-            select_encoder(&config.codec)
+            select_encoder(&config.codec, config.width, config.height)
         } else {
             // Deterministic mode: always use software encoder for bit-identical output.
             let codec = ffenc::find_by_name(&config.codec)

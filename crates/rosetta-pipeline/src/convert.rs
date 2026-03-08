@@ -110,6 +110,13 @@ impl Converter {
         source_path: &Path,
         output_path: &Path,
     ) -> RosettaResult<ConversionResult> {
+        // Suppress ffmpeg stderr noise (swscaler, color range warnings) when quiet.
+        if self.config.quiet {
+            unsafe {
+                ffmpeg_next::ffi::av_log_set_level(ffmpeg_next::ffi::AV_LOG_ERROR as i32);
+            }
+        }
+
         // 1. Detect source format.
         let source_format = if let Some(ref fmt) = self.config.source_format {
             fmt.clone()

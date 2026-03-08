@@ -146,7 +146,9 @@ pub fn run(path: &str, output_format: OutputFormat) -> Result<()> {
     let (resolved_path, format_name) = crate::output::resolve_and_detect(path)?;
     let reader = rosetta_formats::get_reader(&format_name)?;
 
-    let read_output = reader.read_episodes(&resolved_path)?;
+    // Skip image loading — stats only needs numeric action/state fields.
+    let opts = rosetta_formats::ReadOptions { skip_images: true };
+    let read_output = reader.read_episodes_with_options(&resolved_path, &opts)?;
     let episodes = &read_output.data;
 
     let total_episodes = episodes.len();

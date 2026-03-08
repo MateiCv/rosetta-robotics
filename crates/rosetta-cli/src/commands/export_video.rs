@@ -97,7 +97,10 @@ pub fn run(
             let encoding = lazy_img.encoding;
 
             // Create output filename: {episode_id}_{camera_name}.mp4
-            let output_filename = format!("{}_{}.mp4", episode.episode_id, camera_name);
+            // Sanitize camera name: replace '/' with '_' to avoid invalid paths
+            // (e.g., RLDS uses "observation/image" as camera names).
+            let safe_camera = camera_name.replace('/', "_");
+            let output_filename = format!("{}_{}.mp4", episode.episode_id, safe_camera);
             let output_path = Path::new(output_dir).join(&output_filename);
 
             // Create encoder.

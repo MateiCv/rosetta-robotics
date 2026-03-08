@@ -41,8 +41,16 @@ pub fn run(path: &str, output_format: OutputFormat, generate_config: Option<&Pat
 fn print_human_readable(info: &DatasetInfo, format_name: &str) {
     println!("Dataset: {}", info.path.display());
     println!("Format: {format_name}");
-    println!("Episodes: {}", info.total_episodes);
-    println!("Total frames: {}", info.total_frames);
+    if info.total_episodes > 0 {
+        println!("Episodes: {}", info.total_episodes);
+    } else {
+        println!("Episodes: unknown");
+    }
+    if info.total_frames > 0 {
+        println!("Total frames: {}", info.total_frames);
+    } else {
+        println!("Total frames: unknown");
+    }
 
     match info.fps {
         Some(fps) => println!("FPS: {fps}"),

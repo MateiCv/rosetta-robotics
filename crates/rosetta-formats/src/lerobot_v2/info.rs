@@ -41,7 +41,7 @@ pub struct V2InfoJson {
     #[serde(default = "default_chunks_size")]
     pub chunks_size: usize,
     /// Frames per second.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_fps")]
     pub fps: u32,
     /// Train/test splits (e.g., `{"train": "0:52"}`).
     #[serde(default)]
@@ -83,12 +83,40 @@ where
     Ok(opt.unwrap_or_else(default_v2_video_path))
 }
 
+/// Deserialize fps as u32, accepting both integer and float JSON values.
+/// GR00T and some other datasets write fps as `20.0` (float) instead of `20`.
+fn deserialize_fps<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_u64() {
+                Ok(i as u32)
+            } else if let Some(f) = n.as_f64() {
+                Ok(f.round() as u32)
+            } else {
+                Err(serde::de::Error::custom("fps must be a positive number"))
+            }
+        }
+        serde_json::Value::Null => Ok(0),
+        _ => Err(serde::de::Error::custom("fps must be a number")),
+    }
+}
+
+fn default_shape() -> Vec<i64> {
+    vec![1]
+}
+
 /// Specification for a single dataset feature in v2 format.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct V2FeatureSpec {
     /// Data type string (e.g., "float32", "int64", "video").
     pub dtype: String,
     /// Shape of the feature (e.g., `[6]` for a 6-dim action vector).
+    /// Defaults to `[1]` for scalar features that omit this field.
+    #[serde(default = "default_shape")]
     pub shape: Vec<i64>,
     /// Optional human-readable names for each dimension.
     #[serde(default)]

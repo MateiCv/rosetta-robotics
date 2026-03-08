@@ -15,6 +15,7 @@ indicatif.workspace = true
 sysinfo.workspace = true
 crossbeam-channel.workspace = true
 serde_json.workspace = true
+ffmpeg-next.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -23,4 +24,5 @@ arrow.workspace = true
 parquet.workspace = true
 rosetta-video.workspace = true
 rosetta-formats.workspace = true
+rosetta-quality.workspace = true
 sha2.workspace = true

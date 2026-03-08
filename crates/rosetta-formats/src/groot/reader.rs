@@ -11,7 +11,7 @@ use rosetta_core::{DatasetInfo, Episode, RosettaResult, ReadOutput};
 use crate::detection::{DetectionResult, FormatDetector};
 use crate::lerobot_v2::info::{self, V2InfoJson};
 use crate::lerobot_v2::reader::LeRobotV2Reader;
-use crate::traits::FormatReader;
+use crate::traits::{FormatReader, ReadOptions};
 
 /// Known NVIDIA robot type identifiers found in GR00T datasets.
 const NVIDIA_ROBOT_TYPES: &[&str] = &[
@@ -98,9 +98,15 @@ impl FormatReader for GR00TReader {
     }
 
     fn read_episodes(&self, path: &Path) -> RosettaResult<ReadOutput<Vec<Episode>>> {
-        // Delegate entirely to LeRobotV2Reader -- GR00T datasets are
-        // structurally identical to LeRobot v2.
         self.inner.read_episodes(path)
+    }
+
+    fn read_episodes_with_options(
+        &self,
+        path: &Path,
+        options: &ReadOptions,
+    ) -> RosettaResult<ReadOutput<Vec<Episode>>> {
+        self.inner.read_episodes_with_options(path, options)
     }
 }
 

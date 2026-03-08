@@ -43,9 +43,9 @@ pub fn detect_layout(file: &hdf5::File) -> RosettaResult<HDF5Layout> {
         }
     }
 
-    // Check for ALOHA layout: /action or /observations at root
+    // Check for ALOHA layout: /action(s) or /observations at root
     let root_members: Vec<String> = file.member_names().unwrap_or_default();
-    let has_action = root_members.iter().any(|n| n == "action");
+    let has_action = root_members.iter().any(|n| n == "action" || n == "actions");
     let has_observations = root_members.iter().any(|n| n == "observations");
 
     if has_action || has_observations {
@@ -532,24 +532,74 @@ fn read_actions_dataset(demo_group: &hdf5::Group) -> RosettaResult<(usize, Vec<f
 }
 
 /// Read /action dataset at file root (ALOHA layout).
+///
+/// Handles two variants:
+/// - `/action` as a single (T, dim) dataset
+/// - `/actions` as a group containing sub-datasets (e.g. `ee_6d_pos`, `ee_quat_pos`)
+///   which are concatenated along the action dimension
 fn read_root_action(file: &hdf5::File) -> RosettaResult<(usize, Vec<f64>, usize)> {
-    let action_ds = file.dataset("action").map_err(|e| {
-        RosettaError::Config(format!("Failed to open /action dataset: {e}"))
-    })?;
-
-    let shape = action_ds.shape();
-    if shape.len() != 2 {
-        return Err(RosettaError::Config(format!(
-            "Expected 2D /action dataset, got shape: {:?}",
-            shape
-        )));
+    // Try /action as a single dataset first
+    if let Ok(action_ds) = file.dataset("action") {
+        let shape = action_ds.shape();
+        if shape.len() == 2 {
+            let num_frames = shape[0];
+            let action_dim = shape[1];
+            let data: Vec<f64> = read_dataset_as_f64(&action_ds)?;
+            return Ok((num_frames, data, action_dim));
+        }
     }
 
-    let num_frames = shape[0];
-    let action_dim = shape[1];
-    let data: Vec<f64> = read_dataset_as_f64(&action_ds)?;
+    // Try /actions as a group containing sub-datasets (concatenate along dim axis)
+    if let Ok(actions_group) = file.group("actions") {
+        let mut member_names: Vec<String> = actions_group.member_names().unwrap_or_default();
+        member_names.sort(); // deterministic order
 
-    Ok((num_frames, data, action_dim))
+        let mut sub_arrays: Vec<(usize, Vec<f64>, usize)> = Vec::new();
+        for name in &member_names {
+            if let Ok(ds) = actions_group.dataset(name) {
+                let shape = ds.shape();
+                if shape.len() == 2 {
+                    let nf = shape[0];
+                    let dim = shape[1];
+                    let data = read_dataset_as_f64(&ds)?;
+                    sub_arrays.push((nf, data, dim));
+                }
+            }
+        }
+
+        if !sub_arrays.is_empty() {
+            let num_frames = sub_arrays[0].0;
+            let total_dim: usize = sub_arrays.iter().map(|(_, _, d)| d).sum();
+
+            // Interleave: for each frame, concatenate all sub-arrays
+            let mut data = Vec::with_capacity(num_frames * total_dim);
+            for t in 0..num_frames {
+                for (_, sub_data, dim) in &sub_arrays {
+                    let start = t * dim;
+                    let end = start + dim;
+                    if end <= sub_data.len() {
+                        data.extend_from_slice(&sub_data[start..end]);
+                    }
+                }
+            }
+            return Ok((num_frames, data, total_dim));
+        }
+    }
+
+    // Try /actions as a single dataset (plural naming variant)
+    if let Ok(action_ds) = file.dataset("actions") {
+        let shape = action_ds.shape();
+        if shape.len() == 2 {
+            let num_frames = shape[0];
+            let action_dim = shape[1];
+            let data: Vec<f64> = read_dataset_as_f64(&action_ds)?;
+            return Ok((num_frames, data, action_dim));
+        }
+    }
+
+    Err(RosettaError::Config(
+        "No /action or /actions dataset/group found at root".to_string(),
+    ))
 }
 
 /// Read observation group within a robomimic demo.
@@ -566,6 +616,11 @@ fn read_obs_group(
 }
 
 /// Read ALOHA-style /observations group.
+///
+/// Handles multiple layout variants:
+/// - `/observations/qpos`, `/observations/qvel` (flat datasets)
+/// - `/observations/images/{cam}` (images subgroup)
+/// - `/observations/states/qpos`, `/observations/states/qvel` (nested states subgroup)
 fn read_aloha_observations(
     file: &hdf5::File,
     num_frames: usize,
@@ -580,20 +635,57 @@ fn read_aloha_observations(
     // Read direct datasets (qpos, qvel, etc.)
     let member_names = obs_group.member_names().unwrap_or_default();
     for name in &member_names {
-        // Check if it's a dataset (not a group like "images")
+        // Check if it's a dataset (not a group like "images" or "states")
         if let Ok(ds) = obs_group.dataset(name) {
             let obs = read_single_obs_dataset(&ds, name, num_frames)?;
             result.insert(name.clone(), obs);
         }
     }
 
-    // Read images subgroup
+    // Read images subgroup (/observations/images/{cam_name})
     if let Ok(images_group) = obs_group.group("images") {
         let camera_names = images_group.member_names().unwrap_or_default();
         for cam_name in &camera_names {
             if let Ok(ds) = images_group.dataset(cam_name) {
                 let obs = read_single_obs_dataset(&ds, cam_name, num_frames)?;
                 result.insert(cam_name.clone(), obs);
+            }
+        }
+    }
+
+    // Read states subgroup (/observations/states/{key}) — common in ALOHA datasets
+    // where state arrays are nested under a "states" group rather than directly
+    // under /observations.
+    if let Ok(states_group) = obs_group.group("states") {
+        let state_names = states_group.member_names().unwrap_or_default();
+        for name in &state_names {
+            // Skip if we already have this key from direct datasets
+            if result.contains_key(name.as_str()) {
+                continue;
+            }
+            if let Ok(ds) = states_group.dataset(name.as_str()) {
+                // Skip object-type datasets (e.g. language_instruction stored as Python objects)
+                let dtype = ds.dtype().ok();
+                let is_object = dtype
+                    .as_ref()
+                    .and_then(|d| d.to_descriptor().ok())
+                    .map(|desc| matches!(desc, TypeDescriptor::VarLenUnicode | TypeDescriptor::VarLenAscii))
+                    .unwrap_or(false);
+
+                // Also check for opaque/compound types that can't be read as f64
+                let shape = ds.shape();
+                if shape.is_empty() {
+                    continue;
+                }
+
+                // Try reading — skip gracefully on failure (e.g. object dtype)
+                match read_single_obs_dataset(&ds, name.as_str(), num_frames) {
+                    Ok(obs) => { result.insert(name.clone(), obs); }
+                    Err(_) => {
+                        // Silently skip datasets we can't read (object dtype, etc.)
+                        let _ = is_object;
+                    }
+                }
             }
         }
     }

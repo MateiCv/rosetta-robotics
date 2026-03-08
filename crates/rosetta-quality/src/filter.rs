@@ -210,7 +210,7 @@ impl FilterEngine {
             match quality.composite_score {
                 Some(score) if score < threshold => {
                     reasons.push(format!(
-                        "composite score {score:.2} below threshold {threshold:.2}"
+                        "composite score {score:.4} below threshold {threshold:.4}"
                     ));
                 }
                 None => {
@@ -227,7 +227,7 @@ impl FilterEngine {
                 match metric_score.normalized {
                     Some(score) if score < *threshold => {
                         reasons.push(format!(
-                            "{metric_name} score {score:.2} below threshold {threshold:.2}"
+                            "{metric_name} score {score:.4} below threshold {threshold:.4}"
                         ));
                     }
                     None => {
@@ -287,8 +287,8 @@ impl FilterEngine {
 
 /// Extract a short category name from a full exclusion reason string.
 ///
-/// Converts "smoothness score 0.30 below threshold 0.50" to "smoothness"
-/// and "composite score 0.30 below threshold 0.50" to "composite".
+/// Converts "smoothness score 0.3000 below threshold 0.5000" to "smoothness"
+/// and "composite score 0.3000 below threshold 0.5000" to "composite".
 fn extract_reason_category(reason: &str) -> String {
     // Check for metric-specific reasons.
     if let Some(name) = reason.strip_suffix(" score unavailable") {
@@ -774,17 +774,17 @@ mod tests {
         let mut reasons = HashMap::new();
         reasons.insert(
             "episode_2".to_string(),
-            vec!["smoothness score 0.30 below threshold 0.50".to_string()],
+            vec!["smoothness score 0.3000 below threshold 0.5000".to_string()],
         );
         reasons.insert(
             "episode_5".to_string(),
-            vec!["smoothness score 0.20 below threshold 0.50".to_string()],
+            vec!["smoothness score 0.2000 below threshold 0.5000".to_string()],
         );
         reasons.insert(
             "episode_7".to_string(),
             vec![
-                "smoothness score 0.10 below threshold 0.50".to_string(),
-                "dead_actions score 0.25 below threshold 0.50".to_string(),
+                "smoothness score 0.1000 below threshold 0.5000".to_string(),
+                "dead_actions score 0.2500 below threshold 0.5000".to_string(),
             ],
         );
 
@@ -957,11 +957,11 @@ mod tests {
     #[test]
     fn reason_category_extraction() {
         assert_eq!(
-            extract_reason_category("smoothness score 0.30 below threshold 0.50"),
+            extract_reason_category("smoothness score 0.3000 below threshold 0.5000"),
             "smoothness"
         );
         assert_eq!(
-            extract_reason_category("composite score 0.30 below threshold 0.50"),
+            extract_reason_category("composite score 0.3000 below threshold 0.5000"),
             "composite"
         );
         assert_eq!(

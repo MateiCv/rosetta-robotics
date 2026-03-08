@@ -35,7 +35,7 @@ pub mod zarr;
 // Re-export key types for convenience.
 pub use detection::{detect_format_scored, DetectionResult, FormatDetector};
 pub use registry::{all_formats, detect_format, get_reader, get_writer, FormatCapability};
-pub use traits::{FormatReader, FormatWriter};
+pub use traits::{FormatReader, FormatWriter, ReadOptions};
 
 /// Decode a LazyImage to raw RGB bytes, handling JPEG/PNG decoding.
 ///

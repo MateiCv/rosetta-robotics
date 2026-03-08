@@ -960,22 +960,44 @@ fn inspect_vla_ffmpeg(
         }
     }
 
-    // Count frames by reading packets in first file
-    let mut input2 = ffmpeg::format::input(vla_path)
-        .map_err(|e| RosettaError::Inspection {
-            path: vla_path.to_path_buf(),
-            reason: format!("ffmpeg open for counting: {e}"),
-        })?;
+    // Count total frames across all episodes by reading packets in each VLA file.
+    // Each episode may have a different number of frames, so we can't just
+    // multiply the first episode's frame count by total_episodes.
+    let mut total_frames = 0usize;
+    let parent = vla_path.parent().unwrap_or(dataset_path);
+    let mut vla_files: Vec<_> = std::fs::read_dir(parent)
+        .ok()
+        .into_iter()
+        .flat_map(|rd| rd.filter_map(|e| e.ok()))
+        .filter(|e| {
+            e.path()
+                .extension()
+                .is_some_and(|ext| ext == "vla")
+        })
+        .map(|e| e.path())
+        .collect();
+    vla_files.sort();
 
-    let mut max_pts: i64 = -1;
-    for (_stream, packet) in input2.packets() {
-        if let Some(pts) = packet.pts() {
-            if pts > max_pts {
-                max_pts = pts;
+    if vla_files.is_empty() {
+        // Fallback: just count frames from the single file we already have
+        vla_files.push(vla_path.to_path_buf());
+    }
+
+    for vla in &vla_files {
+        if let Ok(mut inp) = ffmpeg::format::input(vla) {
+            let mut max_pts: i64 = -1;
+            for (_stream, packet) in inp.packets() {
+                if let Some(pts) = packet.pts() {
+                    if pts > max_pts {
+                        max_pts = pts;
+                    }
+                }
+            }
+            if max_pts >= 0 {
+                total_frames += (max_pts + 1) as usize;
             }
         }
     }
-    let frames_per_episode = if max_pts >= 0 { (max_pts + 1) as usize } else { 0 };
 
     let mut metadata = HashMap::new();
     metadata.insert("schema_status".to_string(), serde_json::json!("ffmpeg"));
@@ -984,7 +1006,7 @@ fn inspect_vla_ffmpeg(
         format: "robodm".to_string(),
         path: dataset_path.to_path_buf(),
         total_episodes,
-        total_frames: frames_per_episode * total_episodes,
+        total_frames,
         fps,
         robot_type: None,
         fields,

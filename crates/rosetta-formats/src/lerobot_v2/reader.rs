@@ -17,7 +17,7 @@ use rosetta_core::{
 };
 
 use crate::lerobot_v3::parquet_io;
-use crate::traits::FormatReader;
+use crate::traits::{FormatReader, ReadOptions};
 
 use super::info::{self, V2InfoJson};
 
@@ -132,29 +132,50 @@ impl FormatReader for LeRobotV2Reader {
     }
 
     fn read_episodes(&self, path: &Path) -> RosettaResult<ReadOutput<Vec<Episode>>> {
+        self.read_episodes_impl(path, false)
+    }
+
+    fn read_episodes_with_options(
+        &self,
+        path: &Path,
+        options: &ReadOptions,
+    ) -> RosettaResult<ReadOutput<Vec<Episode>>> {
+        self.read_episodes_impl(path, options.skip_images)
+    }
+}
+
+impl LeRobotV2Reader {
+    fn read_episodes_impl(
+        &self,
+        path: &Path,
+        skip_images: bool,
+    ) -> RosettaResult<ReadOutput<Vec<Episode>>> {
         let info = info::read_v2_info(path)?;
 
         // Collect video feature names and their camera info.
-        let video_features: Vec<(String, u32, u32, u8)> = info
-            .video_features()
-            .iter()
-            .map(|(name, spec)| {
-                let (h, w, c) = if let Some(ref vi) = spec.info {
-                    (vi.height, vi.width, vi.channels)
-                } else if spec.shape.len() >= 3 {
-                    (
-                        spec.shape[0] as u32,
-                        spec.shape[1] as u32,
-                        spec.shape[2] as u8,
-                    )
-                } else {
-                    (0, 0, 3)
-                };
-                (name.to_string(), h, w, c)
-            })
-            .collect();
+        let video_features: Vec<(String, u32, u32, u8)> = if skip_images {
+            Vec::new()
+        } else {
+            info.video_features()
+                .iter()
+                .map(|(name, spec)| {
+                    let (h, w, c) = if let Some(ref vi) = spec.info {
+                        (vi.height, vi.width, vi.channels)
+                    } else if spec.shape.len() >= 3 {
+                        (
+                            spec.shape[0] as u32,
+                            spec.shape[1] as u32,
+                            spec.shape[2] as u8,
+                        )
+                    } else {
+                        (0, 0, 3)
+                    };
+                    (name.to_string(), h, w, c)
+                })
+                .collect()
+        };
 
-        // Identify data features (non-video, non-index float32 fields).
+        // Identify data features (non-video, non-index numeric fields).
         let data_feature_names: Vec<String> = info
             .data_features()
             .iter()
@@ -162,47 +183,93 @@ impl FormatReader for LeRobotV2Reader {
                 !matches!(
                     *name,
                     "frame_index" | "episode_index" | "index" | "timestamp" | "task_index"
-                ) && spec.dtype == "float32"
+                ) && matches!(spec.dtype.as_str(), "float32" | "float64" | "int64" | "int32" | "bool")
             })
             .map(|(name, _)| name.to_string())
             .collect();
 
         let warnings = Mutex::new(Vec::new());
 
+        // Detect multi-episode Parquet files: some datasets (notably GR00T
+        // block_stacking) pack all episodes into a single Parquet file.
+        // Check if episode 0 exists but episode 1 does not — if so, read
+        // the shared file once and split by episode_index column.
+        let multi_ep_batches = if info.total_episodes > 1 {
+            let ep0_path = path.join(info.resolve_data_path(info.chunk_for_episode(0), 0));
+            let ep1_path = path.join(info.resolve_data_path(info.chunk_for_episode(1), 1));
+            if ep0_path.exists() && !ep1_path.exists() {
+                // Might be a multi-episode file — read and check.
+                match parquet_io::read_parquet_file(&ep0_path) {
+                    Ok(batches) => {
+                        // Only treat as multi-episode if the file actually
+                        // contains rows for episode_index > 0.
+                        if has_multiple_episodes(&batches) {
+                            Some(split_batches_by_episode(&batches, info.total_episodes))
+                        } else {
+                            None
+                        }
+                    }
+                    Err(_) => None,
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Build all episodes in parallel using rayon.
         // Each episode has its own Parquet file + own video files — zero contention.
         let episode_results: Vec<Option<Episode>> = (0..info.total_episodes)
             .into_par_iter()
             .map(|ep_idx| {
-                let chunk_idx = info.chunk_for_episode(ep_idx);
-                let data_path_rel = info.resolve_data_path(chunk_idx, ep_idx);
-                let data_path = path.join(&data_path_rel);
+                // Use pre-split batches if available, otherwise read per-episode file.
+                let batches = if let Some(ref split) = multi_ep_batches {
+                    match split.get(&ep_idx) {
+                        Some(b) if !b.is_empty() => b.clone(),
+                        _ => {
+                            warnings.lock().unwrap().push(ReadWarning {
+                                episode_id: Some(ep_idx.to_string()),
+                                message: format!(
+                                    "No data rows for episode {} in multi-episode Parquet",
+                                    ep_idx
+                                ),
+                                severity: WarningSeverity::Warning,
+                            });
+                            return None;
+                        }
+                    }
+                } else {
+                    let chunk_idx = info.chunk_for_episode(ep_idx);
+                    let data_path_rel = info.resolve_data_path(chunk_idx, ep_idx);
+                    let data_path = path.join(&data_path_rel);
 
-                if !data_path.exists() {
-                    warnings.lock().unwrap().push(ReadWarning {
-                        episode_id: Some(ep_idx.to_string()),
-                        message: format!(
-                            "Parquet file not found: {}, skipping episode {}",
-                            data_path.display(),
-                            ep_idx
-                        ),
-                        severity: WarningSeverity::Error,
-                    });
-                    return None;
-                }
-
-                let batches = match parquet_io::read_parquet_file(&data_path) {
-                    Ok(b) => b,
-                    Err(e) => {
+                    if !data_path.exists() {
                         warnings.lock().unwrap().push(ReadWarning {
                             episode_id: Some(ep_idx.to_string()),
                             message: format!(
-                                "Failed to read Parquet for episode {}: {}",
-                                ep_idx, e
+                                "Parquet file not found: {}, skipping episode {}",
+                                data_path.display(),
+                                ep_idx
                             ),
                             severity: WarningSeverity::Error,
                         });
                         return None;
+                    }
+
+                    match parquet_io::read_parquet_file(&data_path) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            warnings.lock().unwrap().push(ReadWarning {
+                                episode_id: Some(ep_idx.to_string()),
+                                message: format!(
+                                    "Failed to read Parquet for episode {}: {}",
+                                    ep_idx, e
+                                ),
+                                severity: WarningSeverity::Error,
+                            });
+                            return None;
+                        }
                     }
                 };
 
@@ -234,6 +301,98 @@ impl FormatReader for LeRobotV2Reader {
     }
 }
 
+/// Check whether batches contain more than one distinct `episode_index` value.
+///
+/// Returns `true` only when the data genuinely holds multiple episodes packed
+/// into a single Parquet file (e.g., GR00T block_stacking).
+fn has_multiple_episodes(batches: &[arrow::array::RecordBatch]) -> bool {
+    use arrow::array::{Array, Int64Array};
+
+    let mut seen: Option<i64> = None;
+    for batch in batches {
+        let idx = match batch.schema().index_of("episode_index") {
+            Ok(i) => i,
+            Err(_) => return false,
+        };
+        let col = match batch.column(idx).as_any().downcast_ref::<Int64Array>() {
+            Some(c) => c,
+            None => return false,
+        };
+        for i in 0..col.len() {
+            if col.is_null(i) {
+                continue;
+            }
+            let val = col.value(i);
+            match seen {
+                None => seen = Some(val),
+                Some(prev) if prev != val => return true,
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
+/// Split Arrow RecordBatches by `episode_index` column into per-episode groups.
+///
+/// Used when a single Parquet file contains multiple episodes (e.g., GR00T
+/// block_stacking). Returns a map from episode index to filtered batches.
+fn split_batches_by_episode(
+    batches: &[arrow::array::RecordBatch],
+    total_episodes: usize,
+) -> HashMap<usize, Vec<arrow::array::RecordBatch>> {
+    use arrow::array::{Array, Int64Array};
+    use arrow::compute::filter as arrow_filter;
+
+    let mut result: HashMap<usize, Vec<arrow::array::RecordBatch>> = HashMap::new();
+
+    for batch in batches {
+        let ei_idx = match batch.schema().index_of("episode_index") {
+            Ok(idx) => idx,
+            Err(_) => {
+                // No episode_index column — assign all rows to episode 0.
+                result.entry(0).or_default().push(batch.clone());
+                continue;
+            }
+        };
+
+        let ei_col = match batch.column(ei_idx).as_any().downcast_ref::<Int64Array>() {
+            Some(col) => col,
+            None => {
+                result.entry(0).or_default().push(batch.clone());
+                continue;
+            }
+        };
+
+        // Build per-episode boolean masks and filter.
+        for ep_idx in 0..total_episodes {
+            let mask: arrow::array::BooleanArray = ei_col
+                .iter()
+                .map(|v| v.map(|val| val as usize == ep_idx))
+                .collect();
+
+            // Skip if no rows match this episode.
+            let true_count = mask.iter().filter(|v| v == &Some(true)).count();
+            if true_count == 0 {
+                continue;
+            }
+
+            // Filter each column by the mask.
+            let filtered_columns: Vec<arrow::array::ArrayRef> = batch
+                .columns()
+                .iter()
+                .map(|col| arrow_filter(col.as_ref(), &mask).unwrap())
+                .collect();
+
+            let filtered_batch =
+                arrow::array::RecordBatch::try_new(batch.schema(), filtered_columns).unwrap();
+            result.entry(ep_idx).or_default().push(filtered_batch);
+        }
+    }
+
+    result
+}
+
 /// Build a single Episode from a per-episode Parquet file and batch-decoded video frames.
 fn build_v2_episode(
     dataset_path: &Path,
@@ -243,7 +402,7 @@ fn build_v2_episode(
     video_features: &[(String, u32, u32, u8)],
     data_feature_names: &[String],
 ) -> RosettaResult<Episode> {
-    use arrow::array::{Array, AsArray, Float32Array, Int64Array};
+    use arrow::array::{Array, AsArray, Float32Array, Float64Array, Int64Array};
     use arrow::datatypes::DataType;
 
     let mut episode = Episode::new(episode_index.to_string());
@@ -290,15 +449,16 @@ fn build_v2_episode(
             }
         }
 
-        // Extract timestamp column if present.
+        // Extract timestamp column if present (may be float32 or float64).
         if let Ok(ts_idx) = batch.schema().index_of("timestamp") {
-            if let Some(ts_col) = batch
-                .column(ts_idx)
-                .as_any()
-                .downcast_ref::<Float32Array>()
-            {
+            let ts_col = batch.column(ts_idx);
+            if let Some(f32_col) = ts_col.as_any().downcast_ref::<Float32Array>() {
                 for row in 0..num_rows {
-                    all_timestamps.push(ts_col.value(row));
+                    all_timestamps.push(f32_col.value(row));
+                }
+            } else if let Some(f64_col) = ts_col.as_any().downcast_ref::<Float64Array>() {
+                for row in 0..num_rows {
+                    all_timestamps.push(f64_col.value(row) as f32);
                 }
             }
         }
@@ -316,7 +476,7 @@ fn build_v2_episode(
             }
         }
 
-        // Extract FixedSizeList data features.
+        // Extract list-type data features (FixedSizeList or variable-length List).
         for feat_name in data_feature_names {
             let col_idx = match batch.schema().index_of(feat_name) {
                 Ok(idx) => idx,
@@ -340,10 +500,41 @@ fn build_v2_episode(
                                 .collect();
                             feat_data.push(vec);
                         }
+                    } else if let Some(float_values) =
+                        values.as_any().downcast_ref::<Float64Array>()
+                    {
+                        for row in 0..num_rows {
+                            let offset = row * list_size;
+                            let vec: Vec<f32> = (0..list_size)
+                                .map(|i| float_values.value(offset + i) as f32)
+                                .collect();
+                            feat_data.push(vec);
+                        }
+                    }
+                }
+                DataType::List(_) | DataType::LargeList(_) => {
+                    // Variable-length lists (e.g., GR00T uses list<double>).
+                    let list_array = col.as_list::<i32>();
+                    for row in 0..num_rows {
+                        if list_array.is_null(row) {
+                            continue;
+                        }
+                        let value = list_array.value(row);
+                        let vec: Vec<f32> =
+                            if let Some(f32_arr) = value.as_any().downcast_ref::<Float32Array>() {
+                                (0..f32_arr.len()).map(|i| f32_arr.value(i)).collect()
+                            } else if let Some(f64_arr) =
+                                value.as_any().downcast_ref::<Float64Array>()
+                            {
+                                (0..f64_arr.len()).map(|i| f64_arr.value(i) as f32).collect()
+                            } else {
+                                continue;
+                            };
+                        feat_data.push(vec);
                     }
                 }
                 _ => {
-                    // Non-FixedSizeList float32 features: skip with warning.
+                    // Scalar or unsupported column type — skip.
                 }
             }
         }

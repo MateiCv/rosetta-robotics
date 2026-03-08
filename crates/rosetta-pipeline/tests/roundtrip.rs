@@ -25,8 +25,8 @@ const FRAMES_PER_EPISODE: usize = 10;
 /// Action/state dimension.
 const DIM: usize = 4;
 /// Video frame size.
-const VIDEO_WIDTH: u32 = 4;
-const VIDEO_HEIGHT: u32 = 4;
+const VIDEO_WIDTH: u32 = 64;
+const VIDEO_HEIGHT: u32 = 64;
 /// FPS.
 const FPS: u32 = 30;
 

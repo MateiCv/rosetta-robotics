@@ -198,7 +198,9 @@ impl QualityAnalyzer {
         let info = reader.inspect(path)?;
         let dataset_fps = info.fps;
 
-        let read_output = reader.read_episodes(path)?;
+        // Skip image loading — quality analysis only needs action/state/timestamp data.
+        let opts = rosetta_formats::ReadOptions { skip_images: true };
+        let read_output = reader.read_episodes_with_options(path, &opts)?;
         let mut per_episode = Vec::new();
 
         for episode in &read_output.data {

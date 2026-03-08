@@ -373,23 +373,44 @@ fn inspect_aloha(path: &Path) -> RosettaResult<DatasetInfo> {
         }
     }
 
-    let total_episodes = files.len();
-    // Count total frames across all files (not just first * count).
+    // Count total frames and valid episodes across all files (not just first * count).
+    // Files that fail to open (truncated/corrupt) are excluded from the count.
+    let mut valid_episode_count = 1usize; // first file already validated above
     let mut estimated_total_frames = total_frames; // first file already counted
     for f in files.iter().skip(1) {
         if let Ok(fh) = open_hdf5(f) {
+            valid_episode_count += 1;
             if let Ok(actions) = fh.dataset("action") {
                 estimated_total_frames += actions.shape()[0];
+            } else if let Ok(actions_group) = fh.group("actions") {
+                // /actions is a group — read frame count from first sub-dataset
+                let names = actions_group.member_names().unwrap_or_default();
+                let mut found = false;
+                for name in &names {
+                    if let Ok(ds) = actions_group.dataset(name) {
+                        let shape = ds.shape();
+                        if !shape.is_empty() {
+                            estimated_total_frames += shape[0];
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                if !found {
+                    estimated_total_frames += total_frames;
+                }
             } else if let Ok(qpos) = fh.dataset("observations/qpos") {
+                estimated_total_frames += qpos.shape()[0];
+            } else if let Ok(qpos) = fh.dataset("observations/states/qpos") {
                 estimated_total_frames += qpos.shape()[0];
             } else {
                 // Fallback: assume same as first file
                 estimated_total_frames += total_frames;
             }
-        } else {
-            estimated_total_frames += total_frames;
         }
+        // Silently skip corrupt/truncated files — they'll also be skipped in read_episodes.
     }
+    let total_episodes = valid_episode_count;
 
     metadata.insert("layout".to_string(), serde_json::json!("aloha"));
     if is_dir {
