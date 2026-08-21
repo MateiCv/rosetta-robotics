@@ -44,7 +44,8 @@ def _legacy(base, depth_backend, colour_pair):
 def demo():
     # 1. Bit-compatibility with the shipped routing, over every combination an
     #    OAK rig can present.
-    for preset in ("mvsa", "mvsa-scene", "sgbm", "raft", "raft-half"):
+    assert P.presets() == ["mvsa", "mvsa-scene", "raft", "raft-half", "sgbm"]
+    for preset in P.presets():
         for base in ("high", "left_wrist", "right_wrist"):
             for colour_pair in (True, False):
                 # model=None is the OAK path: the OAK rows ARE the (None, role)
@@ -54,17 +55,22 @@ def demo():
                     got = P.resolve(base, preset, model, colour_pair=colour_pair)
                     want_backend, want_pair, want_decimates = _legacy(
                         base, preset, colour_pair)
-                    assert (got.backend, got.pair) == (want_backend, want_pair), (
+                    # `label` is the backend string a delivered stream records:
+                    # half-res RAFT is now the raft method with scale=2, and it
+                    # must keep reporting the name it always did.
+                    assert (got.label, got.pair) == (want_backend, want_pair), (
                         preset, base, colour_pair, model, got)
-                    # Decimation follows the backend and nothing else.
-                    assert (got.backend == "raft-half") == want_decimates, (
-                        preset, base, got)
+                    assert got.decimate == want_decimates, (preset, base, got)
+                    # The table says what it means now: decimation used to be
+                    # inferred from the backend name being "raft-half".
+                    assert got.decimate == (got.params.get("scale") == 2
+                                            and got.pair == "ir"), got
 
     # 2. The D405 wrist does NOT take the OAK wrist's colour-referenced path.
     oak = P.resolve("left_wrist", "mvsa", "oak", colour_pair=True)
     d405 = P.resolve("left_wrist", "mvsa", "d405", colour_pair=True)
-    assert (oak.backend, oak.pair) == ("mvsa", "colour"), oak
-    assert (d405.backend, d405.pair) == ("raft", "ir"), d405
+    assert (oak.label, oak.pair) == ("mvsa", "colour"), oak
+    assert (d405.label, d405.pair) == ("raft", "ir"), d405
     # A wide-baseline wrist has the same ceiling the OAK does, so it has no row
     # and falls through to the colour-referenced one.
     assert P.resolve("left_wrist", "mvsa", "d435", colour_pair=True) == oak
@@ -72,7 +78,7 @@ def demo():
     # 3. A colour profile with no colour pair falls back on the IR pair rather
     #    than failing the episode.
     fallback = P.resolve("left_wrist", "mvsa", "oak", colour_pair=False)
-    assert (fallback.backend, fallback.pair) == ("raft", "ir"), fallback
+    assert (fallback.label, fallback.pair) == ("raft", "ir"), fallback
 
     # 4. Model inference. calib entries are (d, k, r, p, model, w, h); only the
     #    right eye's P matters here (P[0] = fx, P[3] = -fx*baseline).
@@ -99,6 +105,64 @@ def demo():
             pass
         else:
             raise AssertionError(f"unknown preset {bad!r} was accepted")
+
+    # 6. Every row in the shipped table parses, including its fallback. This
+    #    is what a pod should run at start: the file reaches the fleet through
+    #    an env var and a container boundary, and a typo should fail the launch
+    #    rather than the two-hundredth episode.
+    P.validate()
+
+    # 7. A colour-referenced row MUST name a fallback. Without one, an episode
+    #    whose station never recorded extrinsics has no way to produce depth,
+    #    and the failure lands mid-delivery instead of at parse time.
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as d:
+        bad = Path(d) / "bad.toml"
+        bad.write_text('[p.default.wrist]\nmethod = "mvsa"\npair = "colour"\n')
+        try:
+            P.validate(str(bad))
+        except ValueError as exc:
+            assert "fallback" in str(exc), exc
+        else:
+            raise AssertionError("a colour row with no fallback was accepted")
+
+        # A typo'd key is an error, not a silently ignored setting.
+        typo = Path(d) / "typo.toml"
+        typo.write_text('[p.default.scene]\nmethod = "raft"\ndecimait = true\n')
+        try:
+            P.validate(str(typo))
+        except ValueError as exc:
+            assert "unknown keys" in str(exc), exc
+        else:
+            raise AssertionError("an unknown profile key was accepted")
+
+        # 8. The whole table is replaceable, which is the point of it being a
+        #    file: trying a different method on one camera type is a row, not a
+        #    converter pin bump and an image rebuild.
+        override = Path(d) / "mine.toml"
+        override.write_text('[mvsa.default.wrist]\nmethod = "sgbm"\npair = "ir"\n')
+        got = P.resolve("left_wrist", "mvsa", "oak", colour_pair=True,
+                        path=str(override))
+        assert (got.method, got.pair) == ("sgbm", "ir"), got
+        # ...and the sidecar records which table said so, so a delivered stream
+        # can always be traced back to the config that produced it.
+        prov = got.provenance()
+        assert prov["backend"] == "sgbm" and len(prov["profile_table_sha256"]) == 64
+        assert prov != P.resolve("left_wrist", "mvsa", "oak",
+                                 colour_pair=True).provenance()
+
+    # 9. Every method a shipped row names is actually registered -- a table
+    #    that references a method nobody wrote fails at prepare() time, deep
+    #    inside an episode.
+    from rosetta_depth import registry
+    table, _ = P.load()
+    for preset, families in table.items():
+        for family, roles in families.items():
+            for role, row in roles.items():
+                for name in filter(None, [row["method"],
+                                          (row.get("fallback") or {}).get("method")]):
+                    assert name in registry.METHODS, (preset, family, role, name)
 
     print("depth profiles OK")
 

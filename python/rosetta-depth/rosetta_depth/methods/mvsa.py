@@ -34,7 +34,8 @@ import sys
 
 import numpy as np
 
-from . import constants as S
+from .. import constants as S
+from ..base import Rig, reject_unknown
 
 _MODEL = None
 
@@ -104,21 +105,51 @@ def _k44(K):
     return M
 
 
+class _GatedMedian:
+    """Temporal median-of-3 against MVSA flicker, gated so motion passes through.
+
+    Per-frame MVS inference is independent, so textureless regions "breathe"
+    and codes on quantization boundaries flip. Pixels whose rectified luma
+    changed more than ``tol`` since the previous frame are moving (the camera
+    rides the wrist) and take the current value untouched — no ghosting;
+    quiet pixels take the median of the last three disparities, which deletes
+    single-frame outliers outright at a one-frame lag. Runs on the float
+    disparity BEFORE 8-bit rounding so code-flipping settles too. Invalid (0)
+    is just another sample: one bad frame in three gets bridged, two out of
+    three invalidate the pixel. Operates on torch tensors (CUDA in the
+    pipeline) so the filter runs where the disparity already lives.
+    """
+
+    def __init__(self, tol=8):
+        self.tol, self.hist, self.luma = tol, [], None
+
+    def __call__(self, d, luma):
+        import torch
+        self.hist = (self.hist + [d])[-3:]
+        prev, self.luma = self.luma, luma
+        if len(self.hist) < 3:
+            return d
+        med = torch.stack(self.hist).median(dim=0).values
+        moving = (luma.to(torch.int16) - prev.to(torch.int16)).abs() > self.tol
+        return torch.where(moving, d, med)
+
+
 class MvsaPairGeom:
     """Per-rig maps, poses and intrinsics; ``infer`` runs one frame triple."""
 
     # depth_range parameterizes the decoder's log-sigmoid OUTPUT range, so it
-    # sets the scale the answer comes back on — a wrist range on a scene camera
-    # reads a whole room at 0.3 m. Both entries are anchored, not guessed:
-    # the wrist range killed the near/far wall flip (mvsa_knobs_test.py) and
-    # the scene range is the one that reproduces trusted full-res RAFT on the
-    # tent episodes (mvsa_high_probe.py: med 0.73 m both ways).
-    # ponytail: two rig classes, so a dict keyed on "wrist in name" is enough;
-    # make it a calibration field if a third rig class ever appears.
+    # sets the scale the answer comes back on -- a wrist range on a scene camera
+    # reads a whole room at 0.3 m. Both defaults are anchored, not guessed: the
+    # wrist range killed the near/far wall flip (mvsa_knobs_test.py) and the
+    # scene range is the one that reproduces trusted full-res RAFT on the tent
+    # episodes (mvsa_high_probe.py: med 0.73 m both ways). They are defaults
+    # rather than constants now: `depth_range` is a profile param, so a third
+    # rig class is a table row instead of an edit here.
     RANGE_WRIST = (0.06, 0.6)
     RANGE_SCENE = (0.2, 3.0)
 
-    def __init__(self, entry_l, entry_r, entry_c, rot, trans, size, wrist=True):
+    def __init__(self, entry_l, entry_r, entry_c, rot, trans, size,
+                 wrist=True, depth_range=None, batch=1):
         import cv2
 
         def kd(e):
@@ -144,7 +175,9 @@ class MvsaPairGeom:
         # makes the wall rock-solid AND detailed — but reads the floor ~2x too
         # far (0.34-0.38 m where v6 RAFT proves 0.18-0.20 m). Don't.
         self.size = size
-        self.rng = np.array(self.RANGE_WRIST if wrist else self.RANGE_SCENE)
+        self.rng = np.array(depth_range if depth_range is not None
+                            else (self.RANGE_WRIST if wrist else self.RANGE_SCENE),
+                            dtype=np.float64)
         nKc, _ = cv2.getOptimalNewCameraMatrix(Kc, Dc, size, 0)
         # fxb is an ENCODING constant, not this rig's baseline — mvsa depth is
         # multi-view, so nothing forces the physical colour->IR-left value, and
@@ -182,6 +215,18 @@ class MvsaPairGeom:
         self.src_pose = np.stack([np.linalg.inv(_t44(R_cl, T_cl)),
                                   np.linalg.inv(_t44(R12, T12))])
 
+        # --- the Prepared surface the writer sees -------------------------
+        # MVSA defines its own output frame, so `p` is this geom's undistorted
+        # colour pinhole rather than any stereo rectification, and `fxb` is the
+        # encoding constant set above. crop_y is 0: `size` is already the
+        # delivered colour size.
+        self.p = self.p_flat
+        self.crop_y = 0
+        self.pix_fmts = ("rgb24", "gray", "gray")
+        self.batch_size = batch
+        self.label = "mvsa"
+        self._smooth = _GatedMedian()
+
     def _cuda_consts(self):
         """Per-geom CUDA constants for the direct-forward path, built lazily
         (after ``_model()``, whose TF32 flags must be set first)."""
@@ -209,13 +254,27 @@ class MvsaPairGeom:
                 std=f32(m.normalize.std).view(1, 3, 1, 1))
         return self._cc
 
-    def infer_batch(self, triples):
-        """[(colour_rgb, gray_l, gray_r)] -> [(float disp in code units, luma)].
+    def rectify(self, frames):
+        """(colour_rgb, gray_l, gray_r) -> the three undistorted views + luma.
 
-        Disparity is left un-quantized so the caller can temporally filter
-        before the 8-bit rounding; luma is the rectified colour frame's gray,
-        used as the motion gate for that filter. Both stay on the GPU so the
-        filter + quantize run there and only one uint8 frame crosses the bus.
+        The CPU half, pulled out of the forward so the writer can run it on its
+        producer thread. It was ~9.5 ms/frame of cv2 work sitting in the GPU
+        thread; the same reasoning that moved normalize+resize onto the GPU
+        applies to getting the remaps off it.
+        """
+        import cv2
+        colour_rgb, gray_l, gray_r = frames
+        rc = cv2.remap(colour_rgb, *self.map_c, cv2.INTER_LINEAR)
+        return (rc,
+                cv2.remap(gray_l, *self.map_l, cv2.INTER_LINEAR),
+                cv2.remap(gray_r, *self.map_r, cv2.INTER_LINEAR),
+                cv2.cvtColor(rc, cv2.COLOR_RGB2GRAY))
+
+    def infer(self, items):
+        """[(rc, il, ir, luma)] -> [uint8 code frames], flicker-filtered.
+
+        Disparity is filtered before the 8-bit rounding and stays on the GPU
+        until it is one byte per pixel, so only that crosses the bus.
 
         Preprocessing (normalize + antialiased resize) runs on the GPU and the
         model forward is called directly instead of through
@@ -229,18 +288,14 @@ class MvsaPairGeom:
         near/far wall flip and halve inference — measured: 0.0% of wrist
         pixels beyond 0.6 m over a full episode.
         """
-        import cv2
         import torch
         import torch.nn.functional as F
         cc = self._cuda_consts()
         amp = not os.environ.get("MVSA_FP32")
         lumas, curs, srcs = [], [], []
         with torch.inference_mode():
-            for colour_rgb, gray_l, gray_r in triples:
-                rc = cv2.remap(colour_rgb, *self.map_c, cv2.INTER_LINEAR)
-                il = cv2.remap(gray_l, *self.map_l, cv2.INTER_LINEAR)
-                ir = cv2.remap(gray_r, *self.map_r, cv2.INTER_LINEAR)
-                lumas.append(cv2.cvtColor(rc, cv2.COLOR_RGB2GRAY))
+            for rc, il, ir, luma in items:
+                lumas.append(luma)
                 cur = (torch.from_numpy(rc).cuda().permute(2, 0, 1)[None]
                        .float().div_(255))
                 sg = torch.stack([torch.from_numpy(il).cuda(),
@@ -252,7 +307,7 @@ class MvsaPairGeom:
                                           antialias=True))
                 srcs.append(F.interpolate(src, _TSIZE, mode="bilinear",
                                           antialias=True))
-            b = len(triples)
+            b = len(items)
             # .contiguous() is NOT redundant here, and dropping it is what makes
             # batching unsafe.
             #
@@ -293,9 +348,49 @@ class MvsaPairGeom:
             z = F.interpolate(z, (self.size[1], self.size[0]), mode="bilinear")
             disp = torch.where(z > 1e-3, self.fxb / z.clamp(min=1e-3),
                                z.new_zeros(1)) / S.DEPTH_DISP_SCALE
-        return [(disp[i, 0], torch.from_numpy(lu).cuda())
-                for i, lu in enumerate(lumas)]
+        out = []
+        for i, lu in enumerate(lumas):
+            v = self._smooth(disp[i, 0], torch.from_numpy(lu).cuda())
+            out.append(v.round().clamp(0, 255).byte().cpu().numpy())
+        return out
 
-    def infer(self, colour_rgb, gray_l, gray_r):
-        """Single-frame convenience wrapper over ``infer_batch``."""
-        return self.infer_batch([(colour_rgb, gray_l, gray_r)])[0]
+
+class MvsaMethod:
+    """MVSAnywhere: cost-volume MVS over colour + both IR eyes.
+
+    SAMPLE DELIVERIES ONLY -- the weights are research / non-commercial. A
+    production twin would be IGEV-MVS (MIT), a hand-rolled plane sweep, or
+    Fast-FoundationStereo.
+
+    Three-view, so it has no ``ir`` pair to fall back to: a profile that routes
+    a camera here must name a ``fallback`` for episodes whose station never
+    recorded the colour<->IR-left extrinsics.
+    """
+
+    name = "mvsa"
+    views = 3
+    needs_gpu = True
+    assets = {
+        "mvsanywhere": {"env_repo": "MVSA_REPO", "env_ckpt": "MVSA_CKPT",
+                        "licence": "non-commercial"},
+        "torch_cache": {"env": "TORCH_HOME",
+                        "why": "dinov2 + resnet18_lpf4; without it the pod "
+                               "reaches GitHub after claiming an episode"},
+    }
+
+    def prepare(self, rig: Rig, pair: str, **params) -> MvsaPairGeom:
+        reject_unknown(self.name, params, {"depth_range", "batch"})
+        if pair != "colour":
+            raise ValueError(
+                f"mvsa is a 3-view method and always references the colour "
+                f"camera; the profile asked for pair={pair!r}.")
+        if rig.colour is None or rig.extrinsics is None:
+            raise ValueError(
+                "mvsa needs the colour camera's calibration and its "
+                "extrinsics_colour_to_left; this episode has neither. The "
+                "profile's `fallback` is what is supposed to catch this.")
+        depth_range = params.get("depth_range")
+        return MvsaPairGeom(rig.left, rig.right, rig.colour, *rig.extrinsics,
+                            rig.out_size, wrist=rig.role == "wrist",
+                            depth_range=tuple(depth_range) if depth_range else None,
+                            batch=int(params.get("batch", 1)))

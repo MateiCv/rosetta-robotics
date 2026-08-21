@@ -14,7 +14,7 @@ Output contract: the SHIPPED uint8 depth pixel ``v = round(disp_px /
 DEPTH_DISP_SCALE)``, 0 = invalid — quantization (and, for ``scale != 1``,
 the upsample back to full res) runs on the GPU so only 1 byte/px crosses
 PCIe instead of a float32 disparity map (4x less; ~3 ms/frame at 1280x800).
-``write_depth_video`` dispatches on dtype, so the SGBM float path coexists.
+Every method returns this same uint8, so the writer does no dispatch.
 Multi-GPU: run one converter process per GPU with ``CUDA_VISIBLE_DEVICES``.
 """
 from __future__ import annotations
@@ -24,7 +24,9 @@ import sys
 
 import numpy as np
 
-from .constants import DEPTH_DISP_SCALE
+from ..base import Rig, reject_unknown
+from ..constants import DEPTH_DISP_SCALE
+from ._twoview import TwoViewPrepared
 
 # Constructor args shared by every published non-realtime checkpoint
 # (RAFT-Stereo demo.py defaults) — eth3d, middlebury and sceneflow all load
@@ -210,3 +212,58 @@ class RaftDisp:
             _, flow_up = self.model(i1, i2, iters=self.iters, test_mode=True)
             disp = -padder.unpad(flow_up).squeeze()   # model flow is -disparity
             return disp.float().clamp(min=0)          # stays on device
+
+
+class _RaftPrepared(TwoViewPrepared):
+    """RAFT, plus the one thing that is specific to running it under CUDA graphs."""
+
+    def __init__(self, *args, batch_size=1, label="raft", **kw):
+        super().__init__(*args, **kw)
+        self.batch_size = batch_size
+        self.label = label
+
+    def infer(self, items):
+        if self.batch_size == 1 or len(items) == self.batch_size:
+            return super().infer(items)
+        # torch.compile(mode="reduce-overhead") means CUDA graphs, and those are
+        # captured per input SHAPE. A short final batch is a new shape, so it
+        # triggers a recapture -- measured at ~63 s, once per episode, to match
+        # frames that were going to be matched anyway. Easy to miss, because it
+        # disappears whenever the frame count happens to divide by the batch
+        # size; a real episode does not (3,733 % 4 == 1). Pad the tail back to
+        # the compiled width and drop the padding's results.
+        padded = list(items) + [items[-1]] * (self.batch_size - len(items))
+        return self._match.infer_batch(padded)[:len(items)]
+
+
+class RaftMethod:
+    """RAFT-Stereo. ``scale=2`` is the half-resolution scene variant.
+
+    Half-res is a *parameter*, not a separate method, because that is what it
+    is: the same checkpoint at half the input size. It used to be the separate
+    backend name ``raft-half``, which also carried an implicit "and this one may
+    be keyframe-decimated" -- an inference the profile now states outright with
+    ``decimate``. ``label`` keeps reporting ``raft-half`` so a delivered stream's
+    recorded backend string does not change meaning.
+    """
+
+    name = "raft"
+    views = 2
+    needs_gpu = True
+    assets = {
+        "raft_stereo": {
+            "env_dir": "RAFT_STEREO_DIR",
+            "env_weights": "RAFT_STEREO_WEIGHTS",
+            "repo": "https://github.com/princeton-vl/RAFT-Stereo",
+            "licence": "MIT",
+        }
+    }
+
+    def prepare(self, rig: Rig, pair: str, **params) -> _RaftPrepared:
+        reject_unknown(self.name, params, {"iters", "scale", "batch", "device"})
+        scale = int(params.get("scale", 1))
+        match = RaftDisp(iters=int(params.get("iters", 32)), scale=scale,
+                         device=params.get("device"))
+        return _RaftPrepared(self.name, match, rig, pair,
+                             batch_size=int(params.get("batch", 1)),
+                             label="raft-half" if scale == 2 else "raft")

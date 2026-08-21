@@ -1,6 +1,6 @@
 """Self-check for the stereo-pair -> 8-bit grayscale depth mp4 path.
 
-Run: python test_depth.py [sgbm|raft]     (default sgbm; raft needs the GPU box)
+Run: python tests/test_depth.py [sgbm|raft]  (default sgbm; raft needs the GPU box)
 
 A synthetic textured pair with a known uniform shift must come back as a gray
 mp4 whose central pixel values equal shift / DEPTH_DISP_SCALE, with the left
@@ -17,10 +17,14 @@ import av
 import numpy as np
 
 from rosetta_depth import constants as S
-from rosetta_depth.depth import write_depth_video
+from rosetta_depth import registry
+from rosetta_depth.base import Rig
+from rosetta_depth.writer import write_depth_video
 
 W, H, SHIFT, N = 480, 128, 24, 6
 BACKEND = sys.argv[1] if len(sys.argv) > 1 else "sgbm"
+# num_disp is an sgbm knob; RAFT has no search range to cap.
+PARAMS = {"num_disp": 64} if BACKEND == "sgbm" else {}
 
 
 def _write_gray_mp4(path: Path, img: np.ndarray, n=N):
@@ -59,9 +63,11 @@ def test_write_depth_video():
         lp, rp, dp = Path(d) / "l.mp4", Path(d) / "r.mp4", Path(d) / "depth.mp4"
         _write_gray_mp4(lp, left)
         _write_gray_mp4(rp, right)
-        kept = write_depth_video(lp, rp, dp, n_keep=4, calib_l=_ident_calib(),
-                                 calib_r=_ident_calib(), crop_y=0, out_h=H,
-                                 num_disp=64, backend=BACKEND)
+        rig = Rig(left=_ident_calib(), right=_ident_calib(), colour=None,
+                  extrinsics=None, src_size=(W, H), out_size=(W, H),
+                  role="scene", baseline_m=0.05)
+        prepared = registry.get(BACKEND).prepare(rig, "ir", **PARAMS)
+        kept = write_depth_video(prepared, (lp, rp), dp, n_keep=4, out_h=H)
         assert kept == 4, kept
 
         with av.open(str(dp)) as c:
@@ -89,7 +95,7 @@ def test_colour_pair_depth():
     """Colour x IR-left half-baseline path: a known uniform shift must come
     back as v = SHIFT / DEPTH_DISP_SCALE with fxb = fx * baseline, through
     the computed stereoRectify geometry and the rgb24 colour decode."""
-    from rosetta_depth.depth import colour_pair_rect
+    from rosetta_depth.geometry import colour_pair_rect
 
     rng = np.random.default_rng(11)
     big = rng.integers(0, 256, size=(H, W + SHIFT)).astype(np.float32)
@@ -112,10 +118,13 @@ def test_colour_pair_depth():
         lp, cp, dp = Path(d) / "l.mp4", Path(d) / "c.mp4", Path(d) / "depth.mp4"
         _write_gray_mp4(lp, left)
         _write_gray_mp4(cp, colour)
-        kept = write_depth_video(lp, cp, dp, n_keep=4, calib_l=rect_l,
-                                 calib_r=rect_c, crop_y=0, out_h=H,
-                                 num_disp=64, backend=BACKEND,
-                                 rect_h=H, right_colour=True)
+        rig = Rig(left=ident, right=ident, colour=ident,
+                  extrinsics=([1.0, 0, 0, 0, 1.0, 0, 0, 0, 1.0], [b, 0.0, 0.0]),
+                  src_size=(W, H), out_size=(W, H), role="wrist")
+        prepared = registry.get(BACKEND).prepare(rig, "colour", **PARAMS)
+        # The method recomputes the geometry the test just checked by hand.
+        assert abs(prepared.fxb - fxb) < 1e-9, (prepared.fxb, fxb)
+        kept = write_depth_video(prepared, (lp, cp), dp, n_keep=4, out_h=H)
         assert kept == 4, kept
         with av.open(str(dp)) as c:
             g = next(c.decode(c.streams.video[0])).to_ndarray(format="gray")

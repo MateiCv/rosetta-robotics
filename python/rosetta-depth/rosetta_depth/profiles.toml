@@ -1,0 +1,113 @@
+# Which depth configuration a camera gets, decided by what the camera IS.
+#
+# Keyed [preset.family.role]. `family` is the camera hardware, inferred from the
+# stereo baseline the station recorded (profiles.camera_model); `default` is the
+# row an unrecognised or unrecorded rig lands on. Those default rows are the OAK
+# settings, so every episode delivered so far routes exactly as it did before
+# this table existed -- that is a hard requirement, not a nicety, because the
+# fleet is mid-delivery and a quietly different depth corpus has nothing
+# downstream reporting it.
+#
+# A row is:
+#   method    registry key (registry.METHODS)
+#   pair      "ir"     = the factory IR-left x IR-right pair, full baseline
+#             "colour" = colour x IR-left, at HALF the baseline
+#   params    handed verbatim to method.prepare(); unknown keys are an error
+#   decimate  may the writer skip keyframes? scene-only -- a wrist pair moves
+#             with the arm and its worst frame is 85-92% wrong at 1/3
+#   fallback  what to run on the IR pair when this episode has no colour<->IR
+#             extrinsics, so a colour-referenced row cannot be honoured
+#
+# WHY THE WRISTS ARE COLOUR-REFERENCED, since it drives most of this file: the
+# 8-bit stream saturates at 255 * 2 = 510 px, so the nearest encodable depth is
+# fx * baseline / 510. An OAK's 75 mm IR-IR rig puts that at ~9.5 cm, inside a
+# wrist's working range. Halving the baseline moves it to ~4.7 cm. A scene pair
+# sees nothing near the ceiling and keeps the wide baseline for its far field.
+#
+# Override the whole file with DEPTH_PROFILES=/path/to/other.toml.
+
+# --- mvsa: the production table ---------------------------------------------
+
+[mvsa.default.scene]
+# Cold RAFT beats mvsa on the scene pair (+2 cm vs +13-18 cm median error
+# against model-free NCC truth) at ~130 vs ~313 ms/frame, and its weights are
+# MIT where mvsa's are non-commercial.
+method = "raft"
+pair = "ir"
+decimate = true
+params = { scale = 2 }
+
+[mvsa.default.wrist]
+method = "mvsa"
+pair = "colour"
+params = { batch = 1 }
+fallback = { method = "raft" }
+
+[mvsa.d405.wrist]
+# 18 mm baseline, fx ~450 at 848x480, so the 510 px ceiling sits at 1.6 cm. The
+# only reason the OAK wrists are colour-referenced is that their ceiling lands
+# inside the working range; a D405 clears it by a factor of ten and keeps the
+# factory-rectified IR pair and the MIT-licensed matcher.
+#
+# A WIDE-baseline wrist has no row here on purpose -- a D435 at 50 mm has the
+# same ~9 cm ceiling the OAK does, so it must fall through to the
+# colour-referenced default row, which is the answer to a ceiling problem.
+#
+# NOT yet measured against truth on hardware: the RealSense IR pair only started
+# recording 2026-08-19. Run experiments/depth/high_sweep.py on a D405 episode
+# before trusting this on a paid delivery.
+method = "raft"
+pair = "ir"
+
+# --- mvsa-scene: v7 behaviour, kept for comparison ---------------------------
+
+[mvsa-scene.default.scene]
+method = "mvsa"
+pair = "colour"
+params = { batch = 1 }
+fallback = { method = "raft", params = { scale = 2 }, decimate = true }
+
+[mvsa-scene.default.wrist]
+method = "mvsa"
+pair = "colour"
+params = { batch = 1 }
+fallback = { method = "raft" }
+
+[mvsa-scene.d405.wrist]
+method = "raft"
+pair = "ir"
+
+# --- one matcher everywhere. Wrists stay colour-referenced: that is geometry,
+#     not a matcher choice. ------------------------------------------------
+
+[sgbm.default.scene]
+method = "sgbm"
+pair = "ir"
+
+[sgbm.default.wrist]
+method = "sgbm"
+pair = "colour"
+fallback = { method = "sgbm" }
+
+[raft.default.scene]
+method = "raft"
+pair = "ir"
+
+[raft.default.wrist]
+method = "raft"
+pair = "colour"
+fallback = { method = "raft" }
+
+[raft-half.default.scene]
+method = "raft"
+pair = "ir"
+decimate = true
+params = { scale = 2 }
+
+[raft-half.default.wrist]
+# Full res on the wrists even here: half-res was never validated cross-modally,
+# and measured it disagrees with full-res on >50% of wrist pixels at any
+# iteration count.
+method = "raft"
+pair = "colour"
+fallback = { method = "raft" }
