@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rosetta-depth"
+version = "0.1.0"
+description = "Stereo-to-depth methods for robotics datasets: one protocol, one per-camera config table"
+requires-python = ">=3.11"
+# av and numpy are the writer's floor. opencv-contrib (not plain opencv) because
+# the SGBM path needs cv2.ximgproc for the WLS filter.
+dependencies = [
+    "av>=18",
+    "numpy>=2",
+    "opencv-contrib-python>=4.10",
+]
+
+# torch is NOT declared, deliberately. The GPU methods need a torch built
+# against the host's CUDA (the fleet image pins cu121 from a separate lock), and
+# a version resolved here would fight it. Both are optional at runtime: import
+# rosetta_depth.profiles, or run the sgbm method, with no torch installed.
+[project.optional-dependencies]
+raft = []   # + RAFT-Stereo checkout and weights, staged by the image
+mvsa = []   # + MVSAnywhere checkout and checkpoint, staged by the image
+
+[tool.setuptools]
+packages = ["rosetta_depth"]
+
+[tool.setuptools.package-data]
+rosetta_depth = ["*.toml"]
