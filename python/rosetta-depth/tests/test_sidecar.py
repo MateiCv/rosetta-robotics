@@ -103,6 +103,14 @@ def test_matches_the_rust_fixture():
         f"sidecar keys drifted: python-only {sorted(set(produced) - set(fixture))}, "
         f"rust-only {sorted(set(fixture) - set(produced))}")
     for key, want in fixture.items():
+        if key == "profile_table_sha256":
+            # The digest is a hash of profiles.toml, so pinning its VALUE here
+            # would make every table edit -- a new camera row, a corrected
+            # comment -- fail a Rust fixture that does not care what it says.
+            # The contract is that the field exists and is a sha256; which
+            # table it names is provenance, checked in test_profiles.
+            assert len(produced[key]) == len(want) == 64, produced[key]
+            continue
         assert produced[key] == want, (key, produced[key], want)
 
 

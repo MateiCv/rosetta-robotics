@@ -44,18 +44,28 @@ params = { batch = 1 }
 fallback = { method = "raft" }
 
 [mvsa.d405.wrist]
-# 18 mm baseline, fx ~450 at 848x480, so the 510 px ceiling sits at 1.6 cm. The
-# only reason the OAK wrists are colour-referenced is that their ceiling lands
-# inside the working range; a D405 clears it by a factor of ten and keeps the
-# factory-rectified IR pair and the MIT-licensed matcher.
+# MEASURED 2026-08-21 on a real D405 rig (station 579c7b70, put-away-messy-
+# clothes-v4 ep 87, 118 frames sampled across the episode -- tests/d405_profile.py):
+# fx*baseline = 11.62 at 1280x720, so the 510 px ceiling sits at 2.3 cm, and
+# over four minutes of footage NOTHING clipped (0.000% at code 255, 0.0%
+# invalid) while the 5-95 band used 36.9% of the byte -- better than the v7 OAK
+# baseline's 25%, so the small baseline costs no usable resolution either.
+#
+# The stronger reason, found by the same run: a D405 has NO separate RGB
+# imager. Its colour stream comes off the left IR one -- recorded
+# colour->ir_left translation is 0.017 mm, i.e. zero -- so the colour x IR-left
+# pair the OAK row uses has no baseline at all here and rectifies vertically.
+# This row is load-bearing, not an optimisation: without it the default wrist
+# row would send a D405 down a pair that carries no disparity information.
 #
 # A WIDE-baseline wrist has no row here on purpose -- a D435 at 50 mm has the
 # same ~9 cm ceiling the OAK does, so it must fall through to the
 # colour-referenced default row, which is the answer to a ceiling problem.
 #
-# NOT yet measured against truth on hardware: the RealSense IR pair only started
-# recording 2026-08-19. Run experiments/depth/high_sweep.py on a D405 episode
-# before trusting this on a paid delivery.
+# Still unmeasured: absolute accuracy. The run above shows the ENCODING is
+# sound -- nothing clips, nothing is wasted -- not that RAFT reads the right
+# distance on a D405's narrow, close-range pair. There is no reference depth in
+# these recordings to check it against.
 method = "raft"
 pair = "ir"
 

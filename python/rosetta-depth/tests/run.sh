@@ -5,6 +5,7 @@
 #   VTP=~/verlet-to-prismax ./tests/run.sh   + byte-parity against the old code
 #   GPU=1 ./tests/run.sh                 + RAFT inference (GPU box)
 #   GPU=1 VERLET_TEST_EPISODE=~/ep ./tests/run.sh   + MVSA on a real episode
+#   GPU=1 D405_EPISODE=~/scratch/d405-ep ./tests/run.sh  + the D405 wrist row
 #
 # On dev-rw-07 the MVSA dependencies live in their own virtualenv (the one the
 # original experiments used), which has no cv2.ximgproc for SGBM. MVSA_PYTHON
@@ -31,6 +32,10 @@ if [[ -n "${GPU:-}" ]]; then
     if [[ -n "${VERLET_TEST_EPISODE:-}" ]]; then
         printf "\n== mvsa, real episode\n"
         "${MVSA_PYTHON:-python3}" tests/mvsa_episode.py
+    fi
+    if [[ -n "${D405_EPISODE:-}" ]]; then
+        printf "\n== d405 wrist profile, real episode\n"
+        python3 tests/d405_profile.py "$D405_EPISODE"
     fi
     printf "\n== parity, raft and raft-half\\n"
     for m in raft raft-half; do PARITY_METHOD=$m python3 tests/parity.py; done
