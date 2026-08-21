@@ -13,9 +13,15 @@ this compares against what is really deployed:
 
     VTP=/path/to/verlet-to-prismax PYTHONPATH=. python tests/parity.py
 
-Skips (loudly) if VTP is unset. RAFT and MVSA cannot be covered here -- they
-need the GPU box and staged checkpoints -- so run this there too before
-trusting the refactor on those two.
+Skips (loudly) if VTP is unset. ``PARITY_METHOD`` picks which matcher to compare
+through -- ``sgbm`` (default, CPU) or, on the GPU box with the checkpoints
+staged, ``raft`` / ``raft-half``. Both sides are pinned to batch 1 so this
+measures the *writer*, not the batching; batched-equals-unbatched is
+``test_writer.test_batching_changes_nothing``.
+
+MVSA has no old-vs-new comparison to make: it went through a different writer
+function entirely, so there is no shared baseline. Its check is a real-episode
+run on the GPU box.
 """
 import os
 import sys
@@ -26,12 +32,26 @@ from pathlib import Path
 import av
 import numpy as np
 
+from rosetta_depth import registry
 from rosetta_depth.base import Rig
 from rosetta_depth.geometry import colour_pair_rect
-from rosetta_depth.methods.sgbm import SgbmMethod
 from rosetta_depth.writer import write_depth_video as new_write
 
 W, H, SHIFT, N, NUM_DISP = 480, 128, 24, 6, 64
+
+# "raft-half" is a legacy backend NAME on the old side and the raft method with
+# scale=2 on the new one -- which is exactly the equivalence worth proving.
+METHOD = os.environ.get("PARITY_METHOD", "sgbm")
+_NEW = {"sgbm": ("sgbm", {"num_disp": NUM_DISP}),
+        "raft": ("raft", {}),
+        "raft-half": ("raft", {"scale": 2})}
+if METHOD not in _NEW:
+    raise SystemExit(f"PARITY_METHOD must be one of {sorted(_NEW)}, got {METHOD!r}")
+NEW_METHOD, NEW_PARAMS = _NEW[METHOD]
+
+
+def _prepare(rig, pair):
+    return registry.get(NEW_METHOD).prepare(rig, pair, **NEW_PARAMS)
 
 
 def _textured_pair(seed):
@@ -67,12 +87,6 @@ def _ident_calib():
     return ([0.0] * 5, k, r, p, "plumb_bob", W, H)
 
 
-def _decode(path):
-    with av.open(str(path)) as c:
-        return [f.to_ndarray(format="gray") for f in c.decode(c.streams.video[0])], \
-               [(f.pts, f.time_base) for f in c.decode(c.streams.video[0])]
-
-
 def _frames(path):
     with av.open(str(path)) as c:
         return [(f.to_ndarray(format="gray"), f.pts, f.time_base)
@@ -101,12 +115,12 @@ def ir_pair(old_write, d):
     old_dst, new_dst = Path(d) / "old_ir.mp4", Path(d) / "new_ir.mp4"
     old_write(lp, rp, old_dst, n_keep=4, calib_l=_ident_calib(),
               calib_r=_ident_calib(), crop_y=0, out_h=H, num_disp=NUM_DISP,
-              backend="sgbm")
+              backend=METHOD)
 
     rig = Rig(left=_ident_calib(), right=_ident_calib(), colour=None,
               extrinsics=None, src_size=(W, H), out_size=(W, H), crop_y=0,
               role="scene", baseline_m=0.05)
-    prepared = SgbmMethod().prepare(rig, "ir", num_disp=NUM_DISP)
+    prepared = _prepare(rig, "ir")
     new_write(prepared, (lp, rp), new_dst, n_keep=4, out_h=H)
     _compare("ir pair", old_dst, new_dst)
     # fxb falls back to baseline_m * fx when the entry's P[3] is zero.
@@ -126,12 +140,12 @@ def colour_pair(old_write, d):
 
     old_dst, new_dst = Path(d) / "old_c.mp4", Path(d) / "new_c.mp4"
     old_write(lp, cp, old_dst, n_keep=4, calib_l=rect_l, calib_r=rect_c,
-              crop_y=0, out_h=H, num_disp=NUM_DISP, backend="sgbm",
+              crop_y=0, out_h=H, num_disp=NUM_DISP, backend=METHOD,
               rect_h=H, right_colour=True)
 
     rig = Rig(left=ident, right=ident, colour=ident, extrinsics=(rot, trans),
               src_size=(W, H), out_size=(W, H), crop_y=0, role="wrist")
-    prepared = SgbmMethod().prepare(rig, "colour", num_disp=NUM_DISP)
+    prepared = _prepare(rig, "colour")
     new_write(prepared, (lp, cp), new_dst, n_keep=4, out_h=H)
     _compare("colour pair", old_dst, new_dst)
     # The new path recomputes the same geometry the caller used to pass in.
@@ -145,13 +159,15 @@ def demo():
         print("SKIP parity: set VTP=/path/to/verlet-to-prismax "
               "(a checkout of the pre-refactor converter)")
         return
+    # Both sides at batch 1: this compares the writer, not the batching.
+    os.environ["RAFT_BATCH_SIZE"] = "1"
     sys.path.insert(0, vtp)
     from verlet_to_prismax.depth import write_depth_video as old_write
 
     with tempfile.TemporaryDirectory() as d:
         ir_pair(old_write, d)
         colour_pair(old_write, d)
-    print("parity OK: the refactor moved no pixels (sgbm)")
+    print(f"parity OK: the refactor moved no pixels ({METHOD})")
 
 
 if __name__ == "__main__":

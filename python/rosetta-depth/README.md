@@ -28,13 +28,9 @@ colour half was delivered.
 No framework; each file is a script (`python tests/test_x.py`).
 
 ```bash
-PYTHONPATH=. python tests/test_profiles.py     # the table, no deps at all
-PYTHONPATH=. python tests/test_writer.py       # writer, via a fake method
-PYTHONPATH=. python tests/test_sidecar.py      # the contract with Rust
-PYTHONPATH=. python tests/test_depth.py        # sgbm end-to-end, CPU
-PYTHONPATH=. VTP=~/verlet-to-prismax python tests/parity.py   # vs the old code
-
-PYTHONPATH=. python tests/test_depth.py raft   # GPU box only
+./tests/run.sh                             # everything the CPU can do
+VTP=~/verlet-to-prismax ./tests/run.sh     # + byte-parity vs the old converter
+GPU=1 VTP=~/verlet-to-prismax ./tests/run.sh   # + RAFT, on the GPU box
 ```
 
 `test_writer.py` is the one that matters on a laptop: the writer's hard paths
