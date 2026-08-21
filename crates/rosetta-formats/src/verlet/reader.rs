@@ -104,9 +104,16 @@ impl VerletReader {
             };
             let ep_idx = ep_idx as usize;
 
-            episode
-                .metadata
-                .insert(CALIBRATION_KEY.to_string(), calibration.clone());
+            // Per-episode calibration wins over the dataset-level block.
+            // `meta/info.json` is rewritten by whichever episode finalized
+            // last, so on a dataset that spanned a camera swap it describes
+            // the wrong rig for every episode but the newest -- measured on
+            // the fleet, 524 of 1230 upload prefixes hold more than one rig.
+            // The per-episode file is written once, by the rig that recorded.
+            episode.metadata.insert(
+                CALIBRATION_KEY.to_string(),
+                episode_calibration(path, ep_idx).unwrap_or_else(|| calibration.clone()),
+            );
             episode
                 .metadata
                 .insert(GRIPPER_LIMITS_KEY.to_string(), limits.clone());
@@ -137,6 +144,34 @@ impl VerletReader {
 
         Ok(output)
     }
+}
+
+/// `meta/calibration/episode_NNNNNN.json`, in the same normalised shape
+/// `calibration_json` produces from `info.json`, or `None` when the episode
+/// predates the per-episode file.
+///
+/// Parsed leniently: a corrupt sidecar falls back to the dataset-level block
+/// rather than failing the read, because that block is what every episode used
+/// before this file existed.
+fn episode_calibration(root: &Path, ep_idx: usize) -> Option<serde_json::Value> {
+    let path = root.join(format!("meta/calibration/episode_{ep_idx:06}.json"));
+    let text = std::fs::read_to_string(&path).ok()?;
+    let doc: serde_json::Value = serde_json::from_str(&text).ok()?;
+    if !doc.get("camera_info").is_some_and(|v| v.is_object()) {
+        return None;
+    }
+    // `calibration_json` reads its three keys off a V2InfoJson's `extra` catch-
+    // all, so the sidecar only needs a version stamp to parse as one. Routing
+    // through it keeps a single normalisation path -- the canonical camera
+    // names and the distortion-model correction apply to both sources.
+    let mut obj = doc.as_object()?.clone();
+    obj.insert(
+        "codebase_version".to_string(),
+        serde_json::json!("v2.1"),
+    );
+    let raw: crate::lerobot_v2::info::V2InfoJson =
+        serde_json::from_value(serde_json::Value::Object(obj)).ok()?;
+    Some(calibration_json(&raw))
 }
 
 /// All camera stream names declared by `info.json`, canonicalised.
