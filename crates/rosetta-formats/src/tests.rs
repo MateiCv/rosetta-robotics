@@ -406,9 +406,9 @@ fn lazy_video_frame_loads_correctly() {
 // ---- Format Registry Tests ----
 
 #[test]
-fn all_formats_returns_all_eight_formats() {
+fn all_formats_returns_all_ten_formats() {
     let formats = crate::all_formats();
-    assert_eq!(formats.len(), 8, "expected 8 formats, got {}", formats.len());
+    assert_eq!(formats.len(), 10, "expected 10 formats, got {}", formats.len());
 
     let names: Vec<&str> = formats.iter().map(|f| f.name).collect();
     assert!(names.contains(&"lerobot-v3"), "missing lerobot-v3");
@@ -419,12 +419,20 @@ fn all_formats_returns_all_eight_formats() {
     assert!(names.contains(&"rlds"), "missing rlds");
     assert!(names.contains(&"rosbag"), "missing rosbag");
     assert!(names.contains(&"robodm"), "missing robodm");
+    assert!(names.contains(&"verlet"), "missing verlet");
+    assert!(names.contains(&"prismax-mcap"), "missing prismax-mcap");
 }
 
 #[test]
-fn all_formats_can_read_is_true_for_all() {
+fn all_formats_can_read_is_true_for_all_but_delivery_formats() {
     let formats = crate::all_formats();
     for fmt in formats {
+        // prismax-mcap is a delivery target only: we write it for the client and
+        // never read it back, so there is no reader to assert on.
+        if fmt.name == "prismax-mcap" {
+            assert!(!fmt.can_read, "prismax-mcap is write-only");
+            continue;
+        }
         assert!(fmt.can_read, "format '{}' should have can_read=true", fmt.name);
     }
 }
@@ -435,7 +443,8 @@ fn all_formats_can_write_for_seven_formats() {
     let writable: Vec<&str> = formats.iter().filter(|f| f.can_write).map(|f| f.name).collect();
     let read_only: Vec<&str> = formats.iter().filter(|f| !f.can_write).map(|f| f.name).collect();
 
-    assert_eq!(writable.len(), 7, "expected 7 writable formats, got {}: {:?}", writable.len(), writable);
+    assert_eq!(writable.len(), 8, "expected 8 writable formats, got {}: {:?}", writable.len(), writable);
+    assert!(writable.contains(&"prismax-mcap"), "prismax-mcap should be writable");
     assert!(writable.contains(&"lerobot-v3"), "lerobot-v3 should be writable");
     assert!(writable.contains(&"lerobot-v2"), "lerobot-v2 should be writable");
     assert!(writable.contains(&"hdf5"), "hdf5 should be writable");
@@ -444,8 +453,10 @@ fn all_formats_can_write_for_seven_formats() {
     assert!(writable.contains(&"rosbag"), "rosbag should be writable");
     assert!(writable.contains(&"robodm"), "robodm should be writable");
 
-    assert_eq!(read_only.len(), 1, "expected 1 read-only format, got {}: {:?}", read_only.len(), read_only);
+    assert_eq!(read_only.len(), 2, "expected 2 read-only formats, got {}: {:?}", read_only.len(), read_only);
     assert!(read_only.contains(&"groot"), "groot should be read-only");
+    // Verlet is our native on-disk layout: we read it, the station writes it.
+    assert!(read_only.contains(&"verlet"), "verlet should be read-only");
 }
 
 #[test]
@@ -989,7 +1000,7 @@ fn round_trip_robodm() {
 fn all_writable_formats_registered() {
     let formats = crate::all_formats();
     let writable: Vec<&str> = formats.iter().filter(|f| f.can_write).map(|f| f.name).collect();
-    assert_eq!(writable.len(), 7, "expected 7 writable formats, got {}: {:?}", writable.len(), writable);
+    assert_eq!(writable.len(), 8, "expected 8 writable formats, got {}: {:?}", writable.len(), writable);
 
     // Verify get_writer succeeds for each writable format whose feature is active.
     // Some formats (hdf5) require optional feature flags — skip those when not compiled in.
@@ -997,7 +1008,10 @@ fn all_writable_formats_registered() {
         let result = crate::get_writer(name);
         if result.is_err() {
             // Only acceptable if this format is behind an inactive feature flag.
-            let feature_gated = matches!(*name, "hdf5" | "zarr" | "rlds" | "rosbag" | "robodm");
+            let feature_gated = matches!(
+                *name,
+                "hdf5" | "zarr" | "rlds" | "rosbag" | "robodm" | "prismax-mcap"
+            );
             assert!(
                 feature_gated,
                 "get_writer({name}) failed but is not feature-gated: {:?}",

@@ -7,10 +7,12 @@
 pub mod config;
 pub mod decoder;
 pub mod encoder;
+pub mod remux;
 
 pub use config::VideoEncoderConfig;
 pub use decoder::{DecodedFrame, VideoDecoder};
 pub use encoder::H264VideoEncoder;
+pub use remux::{frame_count, trim_copy};
 
 #[cfg(test)]
 mod tests {

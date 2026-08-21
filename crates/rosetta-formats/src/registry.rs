@@ -30,6 +30,9 @@ use crate::rosbag::RosbagReader;
 #[cfg(feature = "rosbag-format")]
 use crate::rosbag::RosbagWriter;
 use crate::traits::{FormatReader, FormatWriter};
+#[cfg(feature = "prismax-format")]
+use crate::prismax::PrismaxWriter;
+use crate::verlet::VerletReader;
 #[cfg(feature = "zarr-format")]
 use crate::zarr::ZarrReader;
 #[cfg(feature = "zarr-format")]
@@ -99,6 +102,18 @@ pub fn all_formats() -> &'static [FormatCapability] {
             description: "ROS bags (ROS 1 .bag read, ROS 2 MCAP read + write)",
         },
         FormatCapability {
+            name: "prismax-mcap",
+            can_read: false,
+            can_write: true,
+            description: "PrismaX delivery (ROS 2/CDR MCAP + video, write-only)",
+        },
+        FormatCapability {
+            name: "verlet",
+            can_read: true,
+            can_write: false,
+            description: "Verlet station native (LeRobot v2.1 + station calibration, read-only)",
+        },
+        FormatCapability {
             name: "robodm",
             can_read: true,
             can_write: true,
@@ -123,6 +138,7 @@ pub fn get_reader(format_name: &str) -> RosettaResult<Box<dyn FormatReader>> {
     match format_name {
         "lerobot-v3" => Ok(Box::new(LeRobotV3Reader)),
         "lerobot-v2" => Ok(Box::new(LeRobotV2Reader)),
+        "verlet" => Ok(Box::new(VerletReader)),
         "groot" => Ok(Box::new(GR00TReader::new())),
         #[cfg(feature = "hdf5-format")]
         "hdf5" => Ok(Box::new(HDF5Reader)),
@@ -149,6 +165,8 @@ pub fn get_writer(format_name: &str) -> RosettaResult<Box<dyn FormatWriter>> {
     match format_name {
         "lerobot-v3" => Ok(Box::new(LeRobotV3Writer::new(30, "unknown"))),
         "lerobot-v2" => Ok(Box::new(LeRobotV2Writer::new(30, "unknown"))),
+        #[cfg(feature = "prismax-format")]
+        "prismax-mcap" => Ok(Box::new(PrismaxWriter::new())),
         #[cfg(feature = "rlds-format")]
         "rlds" => Ok(Box::new(RLDSWriter::new())),
         #[cfg(feature = "hdf5-format")]

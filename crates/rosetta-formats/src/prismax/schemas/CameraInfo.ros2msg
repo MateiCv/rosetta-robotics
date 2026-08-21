@@ -1,0 +1,26 @@
+std_msgs/Header header
+uint32 height
+uint32 width
+string distortion_model
+float64[] d
+float64[9] k
+float64[9] r
+float64[12] p
+uint32 binning_x
+uint32 binning_y
+sensor_msgs/RegionOfInterest roi
+================================================================================
+MSG: std_msgs/Header
+builtin_interfaces/Time stamp
+string frame_id
+================================================================================
+MSG: builtin_interfaces/Time
+int32 sec
+uint32 nanosec
+================================================================================
+MSG: sensor_msgs/RegionOfInterest
+uint32 x_offset
+uint32 y_offset
+uint32 height
+uint32 width
+bool do_rectify

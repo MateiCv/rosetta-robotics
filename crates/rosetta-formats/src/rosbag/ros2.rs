@@ -348,6 +348,9 @@ fn group_mcap_messages_into_frames(
 //   - First 4 bytes: encapsulation header (byte 0: unused, byte 1: endianness 0=BE 1=LE, bytes 2-3: options)
 //   - Then fields in message declaration order, with alignment padding.
 
+/// Length of the CDR encapsulation header, excluded from alignment maths.
+const ENCAPSULATION_HEADER_LEN: usize = 4;
+
 /// CDR reader that tracks position and handles alignment.
 struct CdrReader<'a> {
     data: &'a [u8],
@@ -374,8 +377,11 @@ impl<'a> CdrReader<'a> {
         self.data.len().saturating_sub(self.pos)
     }
 
+    /// Pad to an `alignment`-byte boundary, measured from the end of the 4-byte
+    /// encapsulation header rather than the start of the buffer -- the ROS 2 /
+    /// FastCDR convention. Mirrors `crate::cdr::CdrWriter::align`.
     fn align(&mut self, alignment: usize) {
-        let rem = self.pos % alignment;
+        let rem = (self.pos - ENCAPSULATION_HEADER_LEN) % alignment;
         if rem != 0 {
             self.pos += alignment - rem;
         }
@@ -725,8 +731,8 @@ mod tests {
         let val = 3.14_f64;
         let val_bytes = val.to_le_bytes();
         let mut data = vec![0x00, 0x01, 0x00, 0x00]; // CDR header
-        // Pad to 8-byte alignment for f64 (pos=4, already aligned to 8? 4%8=4, needs 4 more padding)
-        data.extend_from_slice(&[0x00; 4]); // padding to align to 8
+        // No padding: alignment is measured from the end of the header, so the
+        // first f64 sits at body offset 0 and is already 8-aligned.
         data.extend_from_slice(&val_bytes);
         let mut reader = CdrReader::new(&data).unwrap();
         assert_eq!(reader.read_f64(), Some(val));
@@ -756,10 +762,9 @@ mod tests {
 
     #[test]
     fn parse_cdr_twist_basic() {
-        // Twist: 6 x f64, no header
+        // Twist: 6 x f64, no header. The first f64 lands at body offset 0, so
+        // the real wire format carries no padding after the encapsulation header.
         let mut data = vec![0x00, 0x01, 0x00, 0x00]; // CDR header LE
-        // Pad to 8-byte alignment
-        data.extend_from_slice(&[0x00; 4]);
         for i in 0..6 {
             data.extend_from_slice(&(i as f64).to_le_bytes());
         }

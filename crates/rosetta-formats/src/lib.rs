@@ -14,13 +14,17 @@
 //! - **rlds** -- RLDS/TFRecord (Open-X Embodiment) \[read + write, feature = "rlds-format"\]
 //! - **rosbag** -- ROS bags (ROS 1 .bag read, ROS 2 MCAP read + write) \[read + write, feature = "rosbag-format"\]
 //! - **robodm** -- RoboDM (Berkeley .vla) \[read + write, feature = "robodm-format"\]
+//! - **verlet** -- Verlet station native (LeRobot v2.1 + station calibration) \[read\]
 
+pub(crate) mod cdr;
 pub mod detection;
 pub mod groot;
 #[cfg(feature = "hdf5-format")]
 pub mod hdf5;
 pub mod lerobot_v2;
 pub mod lerobot_v3;
+#[cfg(feature = "prismax-format")]
+pub mod prismax;
 pub mod registry;
 #[cfg(feature = "rlds-format")]
 pub mod rlds;
@@ -29,6 +33,7 @@ pub mod robodm;
 #[cfg(feature = "rosbag-format")]
 pub mod rosbag;
 pub mod traits;
+pub mod verlet;
 #[cfg(feature = "zarr-format")]
 pub mod zarr;
 

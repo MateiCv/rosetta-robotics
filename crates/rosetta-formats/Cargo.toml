@@ -8,13 +8,15 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["hdf5-format", "zarr-format", "rlds-format", "rosbag-format", "robodm-format"]
+default = ["hdf5-format", "zarr-format", "rlds-format", "rosbag-format", "robodm-format", "prismax-format"]
 # Note: hdf5-format requires libHDF5 system library. Disable with:
 #   cargo build --no-default-features --features zarr-format,rlds-format,rosbag-format,robodm-format
 hdf5-format = ["dep:hdf5", "dep:ndarray"]
 zarr-format = ["dep:zarrs"]
 rlds-format = ["dep:tfrecord", "dep:prost", "dep:crc32c", "dep:flate2"]
 rosbag-format = ["dep:mcap", "dep:rosbag"]
+# PrismaX delivery writer: MCAP container + packet-copy video trimming.
+prismax-format = ["dep:mcap", "dep:ffmpeg-next"]
 robodm-format = ["dep:ebml-iterable", "dep:ffmpeg-next"]
 
 [dependencies]

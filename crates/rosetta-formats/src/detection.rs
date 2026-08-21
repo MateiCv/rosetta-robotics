@@ -73,6 +73,10 @@ pub fn detect_format_scored(path: &Path) -> RosettaResult<Vec<DetectionResult>> 
     // New detectors are added here as format readers are implemented.
     let detectors: Vec<Box<dyn FormatDetector>> = vec![
         // All 8 format detectors, most specific first.
+        // Verlet is a LeRobot v2.1 superset: it scores 0.95 only when the
+        // station calibration blocks are present, and declines otherwise, so a
+        // plain v2 dataset never contends with it.
+        Box::new(crate::verlet::VerletDetector),
         Box::new(GR00TDetector), // NVIDIA-specific v2 variant (must be before v2)
         Box::new(LeRobotV3Detector), // v3 before v2
         Box::new(LeRobotV2Detector), // v2 after v3

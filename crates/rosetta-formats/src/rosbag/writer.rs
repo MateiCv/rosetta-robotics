@@ -9,9 +9,8 @@
 //! - `sensor_msgs/msg/JointState` for robot state (joint positions)
 //! - `std_msgs/msg/Float64MultiArray` for action data
 //!
-//! CDR (Common Data Representation) serialization uses the same alignment and
-//! encoding rules as the CDR reader in `ros2.rs`, with a new [`CdrWriter`]
-//! struct that mirrors the reader's `CdrReader`.
+//! CDR (Common Data Representation) serialization uses the shared
+//! [`crate::cdr::CdrWriter`], which matches the CDR reader in `ros2.rs`.
 
 use std::collections::BTreeMap;
 use std::io::BufWriter;
@@ -19,111 +18,8 @@ use std::path::Path;
 
 use rosetta_core::{DatasetInfo, Episode, RosettaError, RosettaResult, ImageEncoding};
 
+use crate::cdr::CdrWriter;
 use crate::traits::FormatWriter;
-
-// ---------------------------------------------------------------------------
-// CDR (Common Data Representation) writer
-// ---------------------------------------------------------------------------
-
-/// CDR serializer that mirrors the existing `CdrReader` in `ros2.rs`.
-///
-/// Produces little-endian CDR payloads with a 4-byte encapsulation header
-/// and proper alignment padding for each field type.
-struct CdrWriter {
-    buf: Vec<u8>,
-}
-
-impl CdrWriter {
-    /// Create a new CDR writer with the LE encapsulation header.
-    fn new() -> Self {
-        // CDR encapsulation header: byte 0 unused, byte 1 = 0x01 (LE),
-        // bytes 2-3 = options (0x00, 0x00)
-        Self {
-            buf: vec![0x00, 0x01, 0x00, 0x00],
-        }
-    }
-
-    /// Insert padding bytes to reach an n-byte alignment boundary.
-    fn align(&mut self, n: usize) {
-        let rem = self.buf.len() % n;
-        if rem != 0 {
-            let padding = n - rem;
-            self.buf.extend(std::iter::repeat_n(0u8, padding));
-        }
-    }
-
-    /// Write a single byte (no alignment needed).
-    fn write_u8(&mut self, val: u8) {
-        self.buf.push(val);
-    }
-
-    /// Write a little-endian u32, aligned to 4 bytes.
-    fn write_u32(&mut self, val: u32) {
-        self.align(4);
-        self.buf.extend_from_slice(&val.to_le_bytes());
-    }
-
-    /// Write a little-endian i32, aligned to 4 bytes.
-    fn write_i32(&mut self, val: i32) {
-        self.align(4);
-        self.buf.extend_from_slice(&val.to_le_bytes());
-    }
-
-    /// Write a little-endian f32, aligned to 4 bytes.
-    #[allow(dead_code)]
-    fn write_f32(&mut self, val: f32) {
-        self.align(4);
-        self.buf.extend_from_slice(&val.to_le_bytes());
-    }
-
-    /// Write a little-endian f64, aligned to 8 bytes.
-    fn write_f64(&mut self, val: f64) {
-        self.align(8);
-        self.buf.extend_from_slice(&val.to_le_bytes());
-    }
-
-    /// Write a CDR string (u32 length including null terminator, then bytes, then null).
-    fn write_string(&mut self, s: &str) {
-        let len = s.len() as u32 + 1; // includes null terminator
-        self.write_u32(len);
-        self.buf.extend_from_slice(s.as_bytes());
-        self.buf.push(0); // null terminator
-    }
-
-    /// Write a ROS 2 std_msgs/Header (stamp.sec, stamp.nanosec, frame_id).
-    fn write_header(&mut self, sec: i32, nanosec: u32, frame_id: &str) {
-        self.write_i32(sec);
-        self.write_u32(nanosec);
-        self.write_string(frame_id);
-    }
-
-    /// Write a byte array with u32 length prefix.
-    fn write_bytes(&mut self, data: &[u8]) {
-        self.write_u32(data.len() as u32);
-        self.buf.extend_from_slice(data);
-    }
-
-    /// Write a sequence of strings (u32 count + each string).
-    fn write_string_sequence(&mut self, strings: &[String]) {
-        self.write_u32(strings.len() as u32);
-        for s in strings {
-            self.write_string(s);
-        }
-    }
-
-    /// Write a sequence of f64 values (u32 count + each f64).
-    fn write_f64_sequence(&mut self, values: &[f64]) {
-        self.write_u32(values.len() as u32);
-        for &v in values {
-            self.write_f64(v);
-        }
-    }
-
-    /// Consume the writer and return the CDR payload bytes.
-    fn into_bytes(self) -> Vec<u8> {
-        self.buf
-    }
-}
 
 // ---------------------------------------------------------------------------
 // CDR encoding for known ROS 2 message types
@@ -604,46 +500,6 @@ mod tests {
             }],
             metadata: HashMap::new(),
         }
-    }
-
-    #[test]
-    fn cdr_writer_alignment() {
-        let mut cdr = CdrWriter::new();
-        assert_eq!(cdr.buf.len(), 4); // CDR header
-
-        // Write a u8, then a u32 -- should get 3 bytes of padding
-        cdr.write_u8(0x42);
-        assert_eq!(cdr.buf.len(), 5);
-
-        cdr.write_u32(7);
-        // Position 5 -> align to 4 -> pad to 8 -> write 4 bytes = 12
-        assert_eq!(cdr.buf.len(), 12);
-        // Verify the u32 value
-        let u32_bytes = &cdr.buf[8..12];
-        assert_eq!(u32::from_le_bytes([u32_bytes[0], u32_bytes[1], u32_bytes[2], u32_bytes[3]]), 7);
-
-        // Now write an f64 -- should align to 8
-        cdr.write_f64(3.14);
-        // Position 12 -> align to 8 -> 12 % 8 = 4, pad 4 -> 16 -> write 8 = 24
-        assert_eq!(cdr.buf.len(), 24);
-    }
-
-    #[test]
-    fn cdr_writer_string_encoding() {
-        let mut cdr = CdrWriter::new();
-        cdr.write_string("hello");
-        // CDR header (4) + u32 length (4) + "hello" (5) + null (1) = 14
-        assert_eq!(cdr.buf.len(), 14);
-        // Length should be 6 (includes null)
-        let len_bytes = &cdr.buf[4..8];
-        assert_eq!(
-            u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]]),
-            6
-        );
-        // String content
-        assert_eq!(&cdr.buf[8..13], b"hello");
-        // Null terminator
-        assert_eq!(cdr.buf[13], 0);
     }
 
     #[test]
