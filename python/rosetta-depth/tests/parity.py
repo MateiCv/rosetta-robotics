@@ -153,6 +153,29 @@ def colour_pair(old_write, d):
     assert np.allclose(prepared.p, p1), (prepared.p, p1)
 
 
+def ir_crop(S):
+    """The depth topic's P must be the CROP-SHIFTED left P, as it always was.
+
+    Nothing about a wrong ``cy`` here is visible in the depth video: the pixels
+    are identical, the sidecar validates, the stream decodes. It only shows up
+    as a constant vertical offset between the depth map and the colour frame it
+    is supposed to describe. In the old pipeline the shift happened in
+    ``convert.py`` (``crop_intrinsics`` before ``depth_intrinsics``) and the
+    writer never saw it; now ``Prepared.p`` is the whole answer, so it has to
+    carry the shift itself. Asserted against the converter's own function.
+    """
+    crop = 40
+    ident = _ident_calib()
+    rig = Rig(left=ident, right=ident, colour=None, extrinsics=None,
+              src_size=(W, H), out_size=(W, H - crop), crop_y=crop,
+              role="scene", baseline_m=0.05)
+    # Geometry only -- SGBM so this costs nothing and needs no checkpoint.
+    prepared = registry.get("sgbm").prepare(rig, "ir", num_disp=NUM_DISP)
+    want = S.crop_intrinsics(ident[1], ident[3], crop)[1]
+    assert prepared.p == [float(x) for x in want], (prepared.p, want)
+    print(f"  ir crop: P[6] shifted {ident[3][6]} -> {prepared.p[6]}")
+
+
 def demo():
     vtp = os.environ.get("VTP")
     if not vtp:
@@ -162,11 +185,13 @@ def demo():
     # Both sides at batch 1: this compares the writer, not the batching.
     os.environ["RAFT_BATCH_SIZE"] = "1"
     sys.path.insert(0, vtp)
+    from verlet_to_prismax import schemas as S
     from verlet_to_prismax.depth import write_depth_video as old_write
 
     with tempfile.TemporaryDirectory() as d:
         ir_pair(old_write, d)
         colour_pair(old_write, d)
+    ir_crop(S)
     print(f"parity OK: the refactor moved no pixels ({METHOD})")
 
 

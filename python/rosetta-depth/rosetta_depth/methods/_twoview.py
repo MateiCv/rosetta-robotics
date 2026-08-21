@@ -56,7 +56,17 @@ class TwoViewPrepared:
             self.crop_y = rig.crop_y
             self.pix_fmts = ("gray", "gray")
             self._maps = (rect_maps(rig.left, w, h), rect_maps(rig.right, w, h))
+            # The maps rectify at the FULL source height and the writer crops
+            # afterwards, so the delivered depth image starts `crop_y` rows
+            # down: cy is the one term that moves with it. Leaving it at the
+            # full-frame value is the silent failure -- the CameraInfo stays
+            # well-formed and the stream still decodes, just with a principal
+            # point 40 px off, which reads downstream as a constant vertical
+            # error with nothing pointing back here. (The colour pair rectifies
+            # straight to the output height, so its crop_y is 0 and its P needs
+            # no shift.)
             self.p = [float(x) for x in rig.left[3]]
+            self.p[6] -= rig.crop_y
             p_r = rig.right[3]
             # P[3] is -fx*baseline. A station that wrote a bare calibration
             # block leaves it zero; fall back on the recorded baseline rather
