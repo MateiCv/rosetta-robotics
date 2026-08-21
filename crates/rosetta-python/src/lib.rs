@@ -567,6 +567,42 @@ fn analyze_quality(path: &str) -> PyResult<PyQualityReport> {
 // Python module
 // ---------------------------------------------------------------------------
 
+
+/// Mux depth streams into an already-converted episode, in place.
+///
+/// This is stage B: depth is computed out-of-process by `rosetta-depth`
+/// (torch/CUDA) and left on disk as `<cam>_depth.mp4` plus a `<cam>_depth.json`
+/// sidecar naming the `fxb` and `P` that invert its codes. Point this at the
+/// directory holding them and it reads every sidecar, checks each one can
+/// actually be inverted, and rewrites the episode's MCAP to declare the
+/// matching depth CameraInfo channels.
+///
+/// Idempotent: a topic that already exists is replaced, so a re-run after a
+/// better matcher lands does the right thing rather than duplicating channels.
+///
+/// Splitting the two stages is what lets depth be added months after the colour
+/// half was delivered and billed -- which is not hypothetical, it is how ~10,000
+/// already-shipped episodes have to be treated.
+#[pyfunction]
+#[pyo3(signature = (episode_dir, sidecar_dir=None))]
+fn add_depth(episode_dir: &str, sidecar_dir: Option<&str>) -> PyResult<usize> {
+    let episode = Path::new(episode_dir);
+    let sidecars = rosetta_formats::prismax::sidecars_in(
+        Path::new(sidecar_dir.unwrap_or(episode_dir)),
+    )
+    .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    if sidecars.is_empty() {
+        return Err(PyValueError::new_err(format!(
+            "no *_depth.json sidecars in {}",
+            sidecar_dir.unwrap_or(episode_dir)
+        )));
+    }
+    let count = sidecars.len();
+    rosetta_formats::prismax::add_depth(episode, &sidecars)
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    Ok(count)
+}
+
 #[pymodule]
 fn rosetta_robotics(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyDtype>()?;
@@ -586,5 +622,6 @@ fn rosetta_robotics(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_episodes, m)?)?;
     m.add_function(wrap_pyfunction!(convert, m)?)?;
     m.add_function(wrap_pyfunction!(analyze_quality, m)?)?;
+    m.add_function(wrap_pyfunction!(add_depth, m)?)?;
     Ok(())
 }

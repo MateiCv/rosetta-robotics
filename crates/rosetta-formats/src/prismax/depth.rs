@@ -15,14 +15,18 @@
 //! self-describing, and the colour `camera_info` messages already carry exactly
 //! the per-frame stamps a depth stream must reuse to stay aligned.
 //!
-//! The disparity itself is produced out-of-process by the Python `stereo2depth`
-//! package (torch/CUDA); this module only ingests its output.
+//! The disparity itself is produced out-of-process by the Python `rosetta-depth`
+//! package (torch/CUDA); this module only ingests its output. The two halves
+//! meet at a sidecar -- a depth mp4 plus a JSON naming the `fxb` and `P` that
+//! invert its codes -- so neither imports the other, and a depth pass can run
+//! months after the colour half was delivered. See [`DepthStream::from_sidecar`].
 
 use std::collections::BTreeMap;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
 use rosetta_core::{RosettaError, RosettaResult};
+use serde::Deserialize;
 
 use crate::cdr::{self, CameraInfoMsg};
 
@@ -315,9 +319,216 @@ pub fn add_depth(episode_dir: &Path, streams: &[DepthStream]) -> RosettaResult<(
     Ok(())
 }
 
+/// The sidecar `rosetta-depth` writes next to each depth video.
+///
+/// Only the fields this crate needs are named; the rest (which method, which
+/// params, which profile-table digest) is provenance for a human and is left in
+/// the file rather than parsed. Adding a field to the producer must not break
+/// the consumer.
+#[derive(Debug, Deserialize)]
+struct Sidecar {
+    version: u32,
+    camera_key: String,
+    /// Relative to the sidecar, so the pair survives being moved together.
+    video: String,
+    frames: usize,
+    fxb: f64,
+    p: Vec<f64>,
+    disp_scale: f64,
+    backend: String,
+}
+
+/// Sidecar format this crate understands. Bumped only for a breaking change.
+const SIDECAR_VERSION: u32 = 1;
+
+impl DepthStream {
+    /// Read a `<cam>_depth.json` written by `rosetta_depth.sidecar`.
+    ///
+    /// Everything is checked rather than trusted: the producer is a different
+    /// process in a different language, and the two ways this can be wrong are
+    /// both silent. A zero `fxb` yields `depth = fxb/(scale*v) == 0` everywhere
+    /// while the pixel statistics look perfectly healthy, and a `disp_scale`
+    /// that disagrees with [`DEPTH_DISP_SCALE`] decodes every stored code to
+    /// the wrong distance by a constant factor -- which no downstream validator
+    /// looks for, because a uniformly-scaled depth map is a plausible depth map.
+    pub fn from_sidecar(path: &Path) -> RosettaResult<Self> {
+        let text = std::fs::read_to_string(path).map_err(RosettaError::Io)?;
+        let doc: Sidecar = serde_json::from_str(&text).map_err(|e| {
+            backfill_error(format!("{}: not a depth sidecar: {e}", path.display()))
+        })?;
+        let bad = |reason: String| backfill_error(format!("{}: {reason}", path.display()));
+
+        if doc.version != SIDECAR_VERSION {
+            return Err(bad(format!(
+                "sidecar version {}, expected {SIDECAR_VERSION}",
+                doc.version
+            )));
+        }
+        if doc.disp_scale != DEPTH_DISP_SCALE {
+            return Err(bad(format!(
+                "disp_scale {} != {DEPTH_DISP_SCALE} -- every stored code would \
+                 decode to the wrong depth",
+                doc.disp_scale
+            )));
+        }
+        if !(doc.fxb > 0.0) {
+            return Err(bad(format!(
+                "fxb is {}, so depth = fxb/(scale*v) is zero everywhere",
+                doc.fxb
+            )));
+        }
+        let p: [f64; 12] = doc.p.try_into().map_err(|v: Vec<f64>| {
+            bad(format!("P must be 12 floats, got {}", v.len()))
+        })?;
+        if p[0] <= 0.0 || p[5] <= 0.0 {
+            return Err(bad(format!(
+                "P has non-positive focal lengths ({}, {})",
+                p[0], p[5]
+            )));
+        }
+        // `video` is relative so that moving the pair together keeps working.
+        let video = path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(&doc.video);
+        if !video.is_file() {
+            return Err(bad(format!("names a video that is not there: {}", video.display())));
+        }
+        let _ = doc.frames; // the muxer re-counts against the episode's own grid
+        Ok(DepthStream {
+            camera_key: doc.camera_key,
+            video,
+            fxb: doc.fxb,
+            p,
+            backend: doc.backend,
+        })
+    }
+}
+
+/// Read every `*_depth.json` in `dir`, in a stable order.
+///
+/// Stable because two depth streams muxed in a different order produce two
+/// different byte streams for the same episode, and a delivery that cannot be
+/// reproduced cannot be audited.
+pub fn sidecars_in(dir: &Path) -> RosettaResult<Vec<DepthStream>> {
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map_err(RosettaError::Io)?
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.extension().is_some_and(|e| e == "json")
+                && p.file_stem()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|s| s.ends_with("_depth"))
+        })
+        .collect();
+    paths.sort();
+    paths.iter().map(|p| DepthStream::from_sidecar(p)).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
+    /// Verbatim output of `rosetta_depth.sidecar.write`, so this fixture fails
+    /// the day the producer's shape changes. The Python side asserts the same
+    /// key set from its end; between them, neither can drift alone.
+    const SIDECAR_JSON: &str = r#"{
+  "backend": "raft-half",
+  "camera_key": "high",
+  "disp_scale": 2.0,
+  "frames": 3733,
+  "fxb": 48.45,
+  "method": "raft",
+  "p": [646.0, 0.0, 640.0, 0.0, 0.0, 646.0, 360.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+  "pair": "ir",
+  "params": {"scale": 2},
+  "profile_table_sha256": "bc823fc8a1e85feb31b58a57ddf0fae7fc847d169585498581c45691dd27ec54",
+  "version": 1,
+  "video": "high_depth.mp4"
+}"#;
+
+    /// Write a sidecar (and the video it names) into a fresh dir.
+    fn sidecar_dir(json: &str, with_video: bool) -> tempfile::TempDir {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("high_depth.json"), json).unwrap();
+        if with_video {
+            std::fs::write(dir.path().join("high_depth.mp4"), b"").unwrap();
+        }
+        dir
+    }
+
+    fn read_one(json: &str) -> RosettaResult<DepthStream> {
+        let dir = sidecar_dir(json, true);
+        let out = DepthStream::from_sidecar(&dir.path().join("high_depth.json"));
+        drop(dir);
+        out
+    }
+
+    #[test]
+    fn reads_a_sidecar_the_python_side_wrote() {
+        let stream = read_one(SIDECAR_JSON).expect("parse");
+        assert_eq!(stream.camera_key, "high");
+        assert_eq!(stream.backend, "raft-half");
+        assert_eq!(stream.fxb, 48.45);
+        assert_eq!(stream.p[0], 646.0);
+        // The path is resolved against the sidecar, not the process cwd.
+        assert!(stream.video.ends_with("high_depth.mp4"));
+        // And it round-trips into the CameraInfo the topic ships.
+        let (_, _, _, p) = stream.intrinsics();
+        assert_eq!(p[3], -48.45);
+    }
+
+    /// Both of these are silent failures downstream: a zero fxb reports 0 m
+    /// everywhere while the pixel histogram looks healthy, and a mismatched
+    /// disp_scale decodes every code to the wrong distance by a constant factor
+    /// -- which reads as a plausible depth map to every validator we have.
+    #[test]
+    fn refuses_a_sidecar_that_cannot_be_inverted() {
+        for (bad, want) in [
+            (SIDECAR_JSON.replace("48.45", "0.0"), "fxb"),
+            (SIDECAR_JSON.replace("\"disp_scale\": 2.0", "\"disp_scale\": 1.0"), "disp_scale"),
+            (SIDECAR_JSON.replace("\"version\": 1", "\"version\": 2"), "version"),
+            (SIDECAR_JSON.replace("646.0, 0.0, 640.0, 0.0,", ""), "12 floats"),
+        ] {
+            let err = read_one(&bad).expect_err("should refuse").to_string();
+            assert!(err.contains(want), "expected {want:?} in {err}");
+        }
+    }
+
+    #[test]
+    fn refuses_a_sidecar_whose_video_is_missing() {
+        let dir = sidecar_dir(SIDECAR_JSON, false);
+        let err = DepthStream::from_sidecar(&dir.path().join("high_depth.json"))
+            .expect_err("should refuse")
+            .to_string();
+        assert!(err.contains("not there"), "{err}");
+    }
+
+    /// Stable order, because two streams muxed in a different order give two
+    /// different byte streams for the same episode.
+    #[test]
+    fn collects_sidecars_in_a_stable_order() {
+        let dir = tempfile::TempDir::new().unwrap();
+        for cam in ["right_wrist", "high", "left_wrist"] {
+            std::fs::write(
+                dir.path().join(format!("{cam}_depth.json")),
+                SIDECAR_JSON
+                    .replace("\"high\"", &format!("\"{cam}\""))
+                    .replace("high_depth.mp4", &format!("{cam}_depth.mp4")),
+            )
+            .unwrap();
+            std::fs::write(dir.path().join(format!("{cam}_depth.mp4")), b"").unwrap();
+        }
+        // A stray non-sidecar json at the same level must be ignored, not parsed.
+        std::fs::write(dir.path().join("notes.json"), "{}").unwrap();
+        let names: Vec<String> = sidecars_in(dir.path())
+            .expect("collect")
+            .into_iter()
+            .map(|s| s.camera_key)
+            .collect();
+        assert_eq!(names, ["high", "left_wrist", "right_wrist"]);
+    }
 
     #[test]
     fn depth_intrinsics_put_minus_fxb_in_p3() {

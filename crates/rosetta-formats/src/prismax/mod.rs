@@ -20,5 +20,5 @@ pub mod depth;
 pub mod schemas;
 pub mod writer;
 
-pub use depth::{add_depth, DepthStream};
+pub use depth::{add_depth, sidecars_in, DepthStream};
 pub use writer::PrismaxWriter;
