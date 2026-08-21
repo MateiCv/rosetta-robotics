@@ -155,5 +155,59 @@ fn converts_a_real_station_episode() {
     let twice = std::fs::metadata(&mcap).unwrap().len();
     assert_eq!(after, twice, "re-running the backfill must not duplicate channels");
 
+    // --- the real producer's output --------------------------------------
+    // The synthetic stream above proves the muxer; this proves the *contract*.
+    // `rosetta-depth` writes `<cam>_depth.mp4` + `<cam>_depth.json` and this is
+    // the consumer that has to read them back -- different language, different
+    // process, no shared types. Point VERLET_DEPTH_SIDECARS at a directory of
+    // them (produced with the same VERLET_TEST_EPISODE and the same frame
+    // count) and the whole chain runs end to end:
+    //
+    //   PYTHONPATH=. python -c 'rosetta_depth.sidecar.produce(...)' -> dir
+    //   VERLET_DEPTH_SIDECARS=dir cargo test --test verlet_prismax_e2e
+    if let Ok(dir) = std::env::var("VERLET_DEPTH_SIDECARS") {
+        let streams =
+            rosetta_formats::prismax::sidecars_in(std::path::Path::new(&dir)).expect("read sidecars");
+        assert!(!streams.is_empty(), "no *_depth.json in {dir}");
+        for s in &streams {
+            println!(
+                "sidecar: {} backend={} fxb={:.3} fx={:.1}",
+                s.camera_key, s.backend, s.fxb, s.p[0]
+            );
+            assert!(s.fxb > 0.0, "{}: sidecar must carry an invertible fxb", s.camera_key);
+        }
+        let before = std::fs::metadata(&mcap).unwrap().len();
+        rosetta_formats::prismax::add_depth(&ep_dir, &streams).expect("add real depth");
+        let after = std::fs::metadata(&mcap).unwrap().len();
+        println!("mcap {before} -> {after} bytes after {} real stream(s)", streams.len());
+        for s in &streams {
+            // `high` -> `cam_high_depth.mp4`, per DEPTH_CAM_SPEC.
+            let short = match s.camera_key.as_str() {
+                "high" => "cam_high",
+                "left_wrist" => "cam_left",
+                "right_wrist" => "cam_right",
+                other => panic!("unexpected camera_key {other}"),
+            };
+            let v = ep_dir
+                .join("episode_000000")
+                .join(format!("{short}_depth.mp4"));
+            assert!(v.exists(), "real depth video not placed for {}", s.camera_key);
+            assert_eq!(
+                rosetta_video::frame_count(&v).unwrap(),
+                frames,
+                "{}: depth stream must match the episode frame count",
+                s.camera_key
+            );
+            // The synthetic stream above has the same frame count, so the count
+            // alone cannot tell whether the real one actually replaced it.
+            assert_eq!(
+                std::fs::metadata(&v).unwrap().len(),
+                std::fs::metadata(&s.video).unwrap().len(),
+                "{}: the placed video is not the one the sidecar names",
+                s.camera_key
+            );
+        }
+    }
+
     println!("OUTPUT_DIR={}", out.keep().display());
 }
