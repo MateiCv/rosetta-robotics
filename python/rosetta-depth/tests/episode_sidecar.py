@@ -9,19 +9,17 @@ only check that covers rosetta-depth -> file -> rosetta end to end.
         ~/prismax_top6/raw/01_fruit_ep1 high 1819 /tmp/sidecars
 
 ``frames`` must be the delivered episode's frame count -- the muxer requires
-the depth stream to match it exactly, and the Rust test asserts it. The
-converter's calibration parser is imported from ``VTP``; the Rust ``verlet``
-reader is the eventual replacement for it, but nothing on the Python side
-parses ``info.json`` yet.
+the depth stream to match it exactly, and the Rust test asserts it.
+
+Everything below the info.json parse is :func:`rosetta_depth.episode.depth_for_camera`,
+the same call the delivery worker's stage-B plugin makes, so this exercises the
+production path rather than a parallel one. The parser itself is imported from
+``VTP``; rosetta's Rust ``verlet`` reader is its eventual replacement.
 """
 import json
 import os
 import sys
 from pathlib import Path
-
-import av
-
-IR_TARGET_H = 720      # schemas.IR_TARGET_H: the height a tall IR eye ships at
 
 
 def _video(ep: Path, cam: str) -> Path:
@@ -29,12 +27,6 @@ def _video(ep: Path, cam: str) -> Path:
     if not hits:
         raise SystemExit(f"{ep}: no video for camera {cam!r}")
     return hits[0]
-
-
-def _size(path):
-    with av.open(str(path)) as c:
-        s = c.streams.video[0]
-        return s.codec_context.width, s.codec_context.height
 
 
 def main(argv):
@@ -48,47 +40,22 @@ def main(argv):
     sys.path.insert(0, vtp)
     from verlet_to_prismax import schemas as S
 
-    from rosetta_depth import profiles, sidecar
-    from rosetta_depth.base import Rig
+    from rosetta_depth import episode, sidecar
 
     info = json.loads((ep / "meta" / "info.json").read_text())
-    calib = S.calibration_from_info(info)
-    baselines = S.stereo_eye_baselines(info)
-    extr = S.colour_pair_extrinsics(info)
-    lk, rk = f"{cam}_ir_left", f"{cam}_ir_right"
-    for key in (cam, lk, rk):
-        if key not in calib:
-            raise SystemExit(f"{ep}: no calibration for {key!r}")
-
-    src_size = _size(_video(ep, lk))
-    out_size = _size(_video(ep, cam))
-    # A tall IR eye is matched at full height and centre-cropped after, exactly
-    # as convert.py does it.
-    crop_y = (src_size[1] - IR_TARGET_H) // 2 if src_size[1] > IR_TARGET_H else 0
-    out_h = IR_TARGET_H if crop_y else src_size[1]
-    rig = Rig(left=calib[lk], right=calib[rk], colour=calib.get(cam),
-              extrinsics=extr.get(cam), src_size=src_size, out_size=out_size,
-              crop_y=crop_y, role="wrist" if "wrist" in cam else "scene",
-              baseline_m=baselines.get(rk))
-
-    preset = os.environ.get("DEPTH_PRESET", "mvsa")
-    model = profiles.camera_model(cam, baselines, calib)
-    profile = profiles.resolve(cam, preset, model, colour_pair=cam in extr)
-    print(f"{cam}: model={model} -> {profile.label}/{profile.pair} "
-          f"decimate={profile.decimate} params={profile.params}")
-
-    sources = ((_video(ep, cam), _video(ep, lk), _video(ep, rk))
-               if profile.pair == "colour" and profile.method == "mvsa"
-               else (_video(ep, lk), _video(ep, cam))
-               if profile.pair == "colour"
-               else (_video(ep, lk), _video(ep, rk)))
+    videos = {"colour": _video(ep, cam),
+              "ir_left": _video(ep, f"{cam}_ir_left"),
+              "ir_right": _video(ep, f"{cam}_ir_right")}
     out_dir.mkdir(parents=True, exist_ok=True)
-    art = sidecar.produce(cam, profile, rig, sources, out_dir, frames,
-                          out_h if profile.pair == "ir" else out_size[1])
+    art = episode.depth_for_camera(
+        cam, S.calibration_from_info(info), S.stereo_eye_baselines(info),
+        S.colour_pair_extrinsics(info), videos, out_dir, frames,
+        preset=os.environ.get("DEPTH_PRESET", "mvsa"))
+
     doc = sidecar.read(art.sidecar)
     print(f"wrote {art.video.name} ({art.frames} frames) and "
-          f"{art.sidecar.name}: fxb={doc['fxb']:.3f} cy={doc['p'][6]:.1f} "
-          f"backend={doc['backend']}")
+          f"{art.sidecar.name}: backend={doc['backend']} pair={doc['pair']} "
+          f"fxb={doc['fxb']:.3f} cy={doc['p'][6]:.1f} params={doc['params']}")
 
 
 if __name__ == "__main__":

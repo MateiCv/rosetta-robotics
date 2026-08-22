@@ -24,7 +24,10 @@ raft = []   # + RAFT-Stereo checkout and weights, staged by the image
 mvsa = []   # + MVSAnywhere checkout and checkpoint, staged by the image
 
 [tool.setuptools]
-packages = ["rosetta_depth"]
+# `methods` must be listed too: an explicit `packages` list is not recursive, so
+# an install without it ships the registry and none of the methods it points at
+# -- and the tests never saw it, because they run from the source tree.
+packages = ["rosetta_depth", "rosetta_depth.methods"]
 
 [tool.setuptools.package-data]
 rosetta_depth = ["*.toml"]
